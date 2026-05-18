@@ -1,4 +1,5 @@
 #!/bin/bash
+set -eo pipefail
 
 DATASET=$1
 LR=$2

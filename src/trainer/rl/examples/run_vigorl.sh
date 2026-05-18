@@ -1,18 +1,35 @@
 #!/bin/bash
+set -eo pipefail
 
-RUN_VAL_ONLY=false
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+RL_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../../.." && pwd)
+cd "$RL_ROOT" || exit 1
 
-SAVE_MEM=false
-SAVE_MEM=true
+DATA_ROOT="${DATA_ROOT:-$REPO_ROOT/data}"
 
-domain="spatial" # web_grounding, vstar, spatial, web_action
+RUN_VAL_ONLY="${RUN_VAL_ONLY:-false}"
 
-condition="vigorl" # vanilla_thinking, vigorl, vigorl_multiturn
+SAVE_MEM="${SAVE_MEM:-true}"
 
-SAVE_PATH_BASE="$DATA_ROOT/checkpoints/rl"
-IMAGE_ROOT="$DATA_ROOT"
+domain="${DOMAIN:-amber}" # web_grounding, vstar, spatial, web_action, amber
 
-NUM_GPUS=8 # number of gpus on node
+condition="${CONDITION:-vigorl}" # vanilla_thinking, vigorl, vigorl_multiturn
+
+SAVE_PATH_BASE="${SAVE_PATH_BASE:-$DATA_ROOT/checkpoints/rl}"
+IMAGE_ROOT="${IMAGE_ROOT:-$DATA_ROOT}"
+
+NUM_GPUS=${NUM_GPUS:-8} # number of gpus on node
+
+load_checkpoint_path="${LOAD_CHECKPOINT_PATH:-null}"
+
+USER_MIN_PIXELS="${MIN_PIXELS:-}"
+USER_MAX_PIXELS="${MAX_PIXELS:-}"
+USER_VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-}"
+USER_MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE="${MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE:-}"
+USER_MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE="${MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE:-}"
+USER_TORCH_DTYPE="${TORCH_DTYPE:-}"
+USER_OPTIM_STRATEGY="${OPTIM_STRATEGY:-}"
 
 trap 'ray stop --force; exit' SIGINT SIGTERM
 
@@ -139,7 +156,46 @@ elif [ "$domain" == "web_action" ]; then
     train_file="$DATA_ROOT/visual_search/vigorl_SA_RL.jsonl"
     val_file="$DATA_ROOT/visual_search/vstar/vstarbench_test_RL.jsonl"
 
+elif [ "$domain" == "amber" ]; then
+
+    if [ "$condition" == "vanilla_thinking" ]; then
+
+        MODEL_PATH="${AMBER_MODEL_PATH:-Qwen/Qwen2.5-VL-7B-Instruct}"
+        SYSTEM_PROMPT="./examples/format_prompt/amber_grounded_thinking.jinja"
+        MODEL_TAG="vanilla_thinking_qwen2_5_vl_7b_amber"
+        REWARD_FUNCTION=./examples/reward_function/amber_hallucination.py:amber_compute_score
+
+    elif [ "$condition" == "vigorl" ]; then
+
+        MODEL_PATH="${AMBER_MODEL_PATH:-Qwen/Qwen2.5-VL-7B-Instruct}"
+        SYSTEM_PROMPT="./examples/format_prompt/amber_grounded_thinking.jinja"
+        MODEL_TAG="vigorl_qwen2_5_vl_7b_amber"
+        REWARD_FUNCTION=./examples/reward_function/amber_hallucination.py:amber_compute_score
+
+    elif [ "$condition" == "vigorl_multiturn" ]; then
+
+        echo "domain: $domain, condition: $condition not implemented"
+        exit 1
+
+    fi
+
+    AMBER_MCTS_FILE="${AMBER_MCTS_FILE:-$DATA_ROOT/mllm_hal/amber_discriminative_MCTS.jsonl}"
+    train_file="${AMBER_RL_TRAIN_FILE:-$DATA_ROOT/mllm_hal/amber_discriminative_train_RL.jsonl}"
+    val_file="${AMBER_RL_VAL_FILE:-$DATA_ROOT/mllm_hal/amber_discriminative_val_RL.jsonl}"
+
+    if [ ! -f "$train_file" ] || [ ! -f "$val_file" ]; then
+        python3 "$SCRIPT_DIR/prepare_amber_rl.py" \
+            --input "$AMBER_MCTS_FILE" \
+            --train-output "$train_file" \
+            --val-output "$val_file" \
+            --val-size "${AMBER_VAL_SIZE:-1000}" \
+            --seed 42
+    fi
+
 fi
+
+MIN_PIXELS="${USER_MIN_PIXELS:-$MIN_PIXELS}"
+MAX_PIXELS="${USER_MAX_PIXELS:-$MAX_PIXELS}"
 
 DATASET_TAG="${condition}_${domain}"
 
@@ -153,31 +209,32 @@ SAVE_TAG="${MODEL_TAG}_${DATASET_TAG}"
 
 # ROLLOUT
 ########################################################
-ENABLE_CHUNKED_PREFILL=false
-GPU_MEMORY_UTILIZATION=0.7
-VAL_OVERRIDE_TEMPERATURE=0.5
-MAX_PROMPT_LENGTH=4096
-MAX_RESPONSE_LENGTH=2048
-TENSOR_PARALLEL_SIZE=1
-LIMIT_IMAGES=5 # maximum number of full + cropped images for multiturn
-MAX_ITERATIONS=5 # maximum multiturn iterations
-NUM_ROLLOUTS=5
-MAX_GENERATION_LENGTH_PER_TURN=1024
-STOP_STRINGS="</tool_call>,</answer>,<|im_end|>"
+ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-false}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.7}"
+VAL_OVERRIDE_TEMPERATURE="${VAL_OVERRIDE_TEMPERATURE:-0.5}"
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-4096}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
+MAX_SIDE_LENGTH="${MAX_SIDE_LENGTH:-null}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+LIMIT_IMAGES="${LIMIT_IMAGES:-5}" # maximum number of full + cropped images for multiturn
+MAX_ITERATIONS="${MAX_ITERATIONS:-5}" # maximum multiturn iterations
+NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"
+MAX_GENERATION_LENGTH_PER_TURN="${MAX_GENERATION_LENGTH_PER_TURN:-1024}"
+STOP_STRINGS="${STOP_STRINGS:-</tool_call>,</answer>,<|im_end|>}"
 ########################################################
 
 # Trainer
 ########################################################
-TOTAL_EPISODES=1000
-SAVE_LIMIT=50
-SAVE_FREQ=25
-MAX_STEPS=500 # NOTE: this will override the total_episodes
-VAL_BEFORE_TRAIN=true
-KL_COEF=1.0e-2
-VAL_FREQ=25
-VAL_BATCH_SIZE=1024
-REF_UPDATE_STEPS=99999
-VAL_ONLY=false
+TOTAL_EPISODES="${TOTAL_EPISODES:-1000}"
+SAVE_LIMIT="${SAVE_LIMIT:-50}"
+SAVE_FREQ="${SAVE_FREQ:-25}"
+MAX_STEPS="${MAX_STEPS:-500}" # NOTE: this will override the total_episodes
+VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-true}"
+KL_COEF="${KL_COEF:-1.0e-2}"
+VAL_FREQ="${VAL_FREQ:-25}"
+VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-1024}"
+REF_UPDATE_STEPS="${REF_UPDATE_STEPS:-99999}"
+VAL_ONLY="${VAL_ONLY:-false}"
 ########################################################
 
 # OFFLOADING
@@ -196,28 +253,28 @@ ACTOR_OFFLOAD_OPTIMIZER=false
 
 # actor params
 ########################################################
-TORCH_DTYPE=bf16
-OPTIM_STRATEGY=adamw_bf16
-LR=1.0e-6
-WEIGHT_DECAY=1.0e-2
-FREEZE_VISION_TOWER=true
-ROLLOUT_BATCH_SIZE=128
-GLOBAL_BATCH_SIZE=64
-MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE=4
-MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE=16
-PADDING_FREE=true
-MAX_GRAD_NORM=1.0
-WARMUP_RATIO=0.0
-MASK_NEGATIVE_ADVANTAGE=false
-ADAPTIVE_LR=false
+TORCH_DTYPE="${TORCH_DTYPE:-bf16}"
+OPTIM_STRATEGY="${OPTIM_STRATEGY:-adamw_bf16}"
+LR="${LR:-1.0e-6}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-1.0e-2}"
+FREEZE_VISION_TOWER="${FREEZE_VISION_TOWER:-true}"
+ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-128}"
+GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-64}"
+MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE="${MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE:-4}"
+MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE="${MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE:-16}"
+PADDING_FREE="${PADDING_FREE:-true}"
+MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
+WARMUP_RATIO="${WARMUP_RATIO:-0.0}"
+MASK_NEGATIVE_ADVANTAGE="${MASK_NEGATIVE_ADVANTAGE:-false}"
+ADAPTIVE_LR="${ADAPTIVE_LR:-false}"
 ########################################################
 
 if [ "$SAVE_MEM" == "true" ]; then
-  VAL_BATCH_SIZE=1024
-  MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE=2
-  MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE=8
-  TORCH_DTYPE=bf16
-  OPTIM_STRATEGY=adamw_bf16
+    VAL_BATCH_SIZE="${USER_VAL_BATCH_SIZE:-1024}"
+    MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE="${USER_MICRO_BATCH_SIZE_PER_DEVICE_FOR_UPDATE:-2}"
+    MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE="${USER_MICRO_BATCH_SIZE_PER_DEVICE_FOR_EXPERIENCE:-8}"
+    TORCH_DTYPE="${USER_TORCH_DTYPE:-bf16}"
+    OPTIM_STRATEGY="${USER_OPTIM_STRATEGY:-adamw_bf16}"
 fi
 
 if [ "$MULTITURN" == "true" ]; then

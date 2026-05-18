@@ -753,5 +753,35 @@
       "assistant_tag": "assistant",
       "system_tag": "system"
     }
+  },
+  "amber_train_MCTS_linearized_chains": {
+    "file_name": "mllm_hal/MCTS_72b_reasoning_chains_train.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "amber_val_MCTS_linearized_chains": {
+    "file_name": "mllm_hal/MCTS_72b_reasoning_chains_val.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
 }

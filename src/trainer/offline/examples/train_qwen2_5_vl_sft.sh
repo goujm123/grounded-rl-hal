@@ -1,31 +1,41 @@
+#!/bin/bash
+set -eo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../../.." && pwd)
+OFFLINE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$OFFLINE_ROOT" || exit 1
+
+DATA_ROOT="${DATA_ROOT:-$REPO_ROOT/data}"
+export DATA_ROOT
+
 # replace with the names of the datasets for train/val as logged in data/dataset_info.json
-DATASET="osatlas_train_MCTS_linearized_chains" # sat2_train_MCTS_linearized_chains
-EVAL_DATASET="osatlas_val_MCTS_linearized_chains" # sat2_val_MCTS_linearized_chains
-OUTPUT_DIR="$DATA_ROOT/checkpoints/sft"
-IMAGE_DIR="$DATA_ROOT"
-DEFAULT_CONFIG_PATH="examples/qwen2vl_full_sft.yaml"
+DATASET="${DATASET:-amber_train_MCTS_linearized_chains}"
+EVAL_DATASET="${EVAL_DATASET:-amber_val_MCTS_linearized_chains}"
+OUTPUT_DIR="${OUTPUT_DIR:-$DATA_ROOT/checkpoints/sft}"
+IMAGE_DIR="${IMAGE_DIR:-$DATA_ROOT}"
+DEFAULT_CONFIG_PATH="${DEFAULT_CONFIG_PATH:-examples/qwen2vl_full_sft.yaml}"
 
-LR=(1e-6)
-WD=(0.01)
-EPOCHS=(1)
-NNODES_SWEEP=(1)
-DEFAULT_BS=1
-DEFAULT_GRAD_ACC_SWEEP=(4)
-DEFAULT_WD=0.01
-MAX_STEPS=1000
-MAX_STEPS="none"
-SAVE_STEPS_DEFAULT=100
+LR=("${LR:-1e-6}")
+WD=("${WEIGHT_DECAY:-0.01}")
+EPOCHS=("${EPOCHS:-1}")
+NNODES_SWEEP=("${NNODES:-1}")
+DEFAULT_BS="${PER_DEVICE_TRAIN_BATCH_SIZE:-1}"
+DEFAULT_GRAD_ACC_SWEEP=("${GRADIENT_ACCUMULATION_STEPS:-4}")
+MAX_STEPS="${MAX_STEPS:-none}"
+SAVE_STEPS_DEFAULT="${SAVE_STEPS:-100}"
 
-TEMPLATE="qwen2_vl"
+TEMPLATE="${TEMPLATE:-qwen2_vl}"
 echo "TEMPLATE: ${TEMPLATE}"
 
-MODEL="Qwen/Qwen2.5-VL-7B-Instruct"
-MODEL="Qwen/Qwen2.5-VL-3B-Instruct"
+MODEL="${MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}"
+TAG_MODEL="${TAG_MODEL:-qwen2_5_vl_7b}"
 
 # tags
 TAG="${TAG_MODEL}_full_sft_${DATASET}"
 
-TAG="${TAG}_$(date +'%Y%m%d_%H%M%S')_$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c8)"
+RANDOM_SUFFIX=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c8 || true)
+TAG="${TAG}_$(date +'%Y%m%d_%H%M%S')_${RANDOM_SUFFIX}"
 
 echo "TAG: $TAG"
 

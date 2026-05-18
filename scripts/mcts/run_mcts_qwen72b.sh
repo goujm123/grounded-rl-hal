@@ -1,12 +1,20 @@
 #!/bin/bash
 
-NUM_GPUS=8 # set this to >=4 for 72b models, 1-2 for 3b,7b models
-NUM_PROCESSES=10
-dataset="web_grounding" # sat2, web_grounding, vstar, web_action
-PORT=9001 # port for vllm server
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+
+NUM_GPUS=${NUM_GPUS:-8} # set this to >=4 for 72b models, 1-2 for 3b,7b models
+NUM_PROCESSES=${NUM_PROCESSES:-8}
+dataset="${DATASET:-amber}" # sat2, web_grounding, vstar, web_action, amber
+
+DATA_ROOT="${DATA_ROOT:-/scratch/jjg6977/indie_projects/mllm_hallucination/grounded-rl-hal/data}"
+PORT=${PORT:-9011} # port for vllm server
 
 # export port so src/vlmsearch/models/qwen_vllm.py can find the vllm server
 export PORT
+
+# export DATA_ROOT so that src/vlmsearch/datasets can find the data files
+export DATA_ROOT
 
 if [ "$dataset" == "sat2" ]; then
   SYSTEM_PROMPT="""You are a helpful assistant tasked with answering a question about an image. You should systematically reason through the problem step by step by checking and verifying relevant image regions, while grounding reasoning steps to specific (x, y) points in the image:\nEach reasoning step must be enclosed within '<think>' tags and reference exactly one specific coordinate (x, y):\n<think>\n{Single reasoning step with a grounded point} (x, y).\n</think>\nWhen ready to provide the final answer, enclose it within '<answer>' tags:\n<answer> {text of final answer} </answer>\nYour task is to help the user answer the question that may involve small details in the image.\n- Generate ONLY ONE reasoning step OR the final answer per response.\n- Regions are distinct, non-overlapping areas (e.g., quadrants like top-left, small elements or objects, zones like background/foreground).\n- Each step should describe the region then evaluate it for its relevance to the task and to previous steps.\n- Never repeat coordinates from previous steps.\n- Begin by exploring diverse regions, even if they seem less likely, to ensure comprehensive coverage before narrowing down.\n- Prioritize broad coverage of diverse candidates before deciding.\n- Aim for accurate, representative points in the described area/element/object.\n- If unclear, infer based on likely context or purpose.\n- Your final answer should be the text of the choice you think is most correct.\n- Verify each step by examining multiple possible solutions before selecting a final coordinate.\n- Format points as (x, y)"""
@@ -63,26 +71,98 @@ To be successful, it is very important to follow the following rules:
 
   SAVE_TAG="MCTS_WEB_ACTION_72b"
   JUDGE="web_action"
+
+elif [ "$dataset" == "amber" ]; then
+  SYSTEM_PROMPT="""You are a careful visual verifier answering a yes/no multiple-choice question about an image.
+Your goal is to determine whether the claim in the question is supported by visible evidence in the image.
+
+You should reason step by step by checking relevant image regions and verifying evidence for the queried object, attribute, count, action, or relation.
+
+Each reasoning step must be enclosed within think tags. When useful, reference one representative coordinate (x, y) for the region being checked. These coordinates are evidence anchors, not the final answer.
+
+<think>
+{Check one region and describe the visible evidence with a grounded point (x, y)}.
+</think>
+
+When you are ready to answer, output only:
+<answer> A </answer>
+or
+<answer> B </answer>
+
+Rules:
+
+- Generate only one reasoning step or the final answer per response.
+- Base each step on visible evidence from the image.
+- For existence questions, verify whether the queried object is actually visible and distinguish it from similar objects.
+- For attribute questions, verify the specific property directly from the image rather than assuming it.
+- For relation questions, verify both entities first, then verify the claimed relation.
+- Use the checked visual evidence to choose the better-supported option letter.
+- Answer A when the claim is supported by visible evidence.
+- Answer B when the claim is contradicted or not supported by visible evidence.
+- If the evidence is ambiguous, still choose A or B based on the strongest visible evidence; do not answer \"I don't know.\"
+- If the user prompt asks for the text of the option, still follow this system instruction and answer with the option letter only.
+- Do not use world knowledge to infer details that are not visible.
+- If you mention coordinates, avoid repeating the same point unless you are explicitly re-checking that evidence.
+- The final answer must be exactly A or B."""
+
+  DATA_FILE="$DATA_ROOT/mllm_hal/amber_discriminative_MCTS.jsonl"
+  SAVE_TAG="MCTS_AMBER_72b"
+  JUDGE="string_match"
+
 fi
 
 IMAGE_ROOT=$DATA_ROOT
-MODEL="Qwen/Qwen2.5-VL-72B-Instruct"
+MODEL="${MODEL:-Qwen/Qwen2.5-VL-72B-Instruct}"
+
+if [ "$dataset" == "amber" ]; then
+  : "${MCTS_MAX_DEPTH:=4}"
+  : "${MCTS_N_SIMULATIONS:=4}"
+  : "${MCTS_ROLLOUT_MAX_STEPS:=3}"
+  : "${MCTS_N_ROLLOUTS_PER_NODE:=1}"
+  : "${MCTS_NUM_CHILDREN_PER_EXPAND:=2}"
+  : "${MCTS_MAX_NEW_TOKENS:=256}"
+  : "${MCTS_CHECKPOINT_INTERVAL:=20}"
+else
+  : "${MCTS_MAX_DEPTH:=6}"
+  : "${MCTS_N_SIMULATIONS:=8}"
+  : "${MCTS_ROLLOUT_MAX_STEPS:=5}"
+  : "${MCTS_N_ROLLOUTS_PER_NODE:=2}"
+  : "${MCTS_NUM_CHILDREN_PER_EXPAND:=3}"
+  : "${MCTS_MAX_NEW_TOKENS:=512}"
+  : "${MCTS_CHECKPOINT_INTERVAL:=1}"
+fi
+
+OPTIONAL_ARGS=()
+if [ -n "${MAX_SAMPLES:-}" ]; then
+  OPTIONAL_ARGS+=(--max_samples "${MAX_SAMPLES}")
+fi
+if [ -n "${LOAD_FOLDER:-}" ]; then
+  OPTIONAL_ARGS+=(--load_folder "${LOAD_FOLDER}")
+fi
 
 ACTOR_MODEL="qwen_vllm"
+STARTED_VLLM=0
+VLLM_PID=""
 
-# Add a cleanup function to kill the vLLM server on script exit
+# Add a cleanup function to kill only the vLLM server started by this script.
 cleanup() {
+  local exit_code="$1"
+  trap - EXIT INT TERM
+
   echo "[INFO] Cleaning up resources..."
-  # Find and kill the vLLM server process
-  if pgrep -f "vllm serve" >/dev/null 2>&1; then
-    echo "[INFO] Killing vLLM server process..."
-    pkill -f "vllm serve"
+  if [ "$STARTED_VLLM" -eq 1 ] && [ -n "$VLLM_PID" ] && kill -0 "$VLLM_PID" >/dev/null 2>&1; then
+    echo "[INFO] Stopping vLLM server process (pid=$VLLM_PID)..."
+    kill "$VLLM_PID" >/dev/null 2>&1 || true
+    wait "$VLLM_PID" 2>/dev/null || true
   fi
-  exit 0
+
+  exit "$exit_code"
 }
 
-# # Set trap to call cleanup function on script exit, including Ctrl+C (SIGINT)
-trap cleanup EXIT INT TERM
+# Preserve the real exit status so parent-process failures are not masked.
+trap 'cleanup $?' EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 
 # ---------------------------------------------------------------------
 # 1) If ACTOR_MODEL is "qwen_vllm", check if the vllm server is running.
@@ -90,25 +170,26 @@ trap cleanup EXIT INT TERM
 #    Then wait for it to become reachable.
 # ---------------------------------------------------------------------
 if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
-  # Simple check: see if something is already listening on port 8000
-  # or if "vllm serve" is in the process list
-  if lsof -Pi :9001 -sTCP:LISTEN -t >/dev/null 2>&1 || pgrep -f "vllm serve" >/dev/null 2>&1; then
-    echo "[INFO] vllm server is already running on port 9001"
+  # Only reuse a server that is already bound to the requested port.
+  if lsof -Pi :"${PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+    echo "[INFO] vllm server is already running on port ${PORT}"
   else
     echo "[INFO] Starting vllm server via serve_qwen.sh ..."
     echo "[INFO] VLLM logs saving to vllm_logs/ ..."
     # You can pass $MODEL and GPU count from environment or SLURM variables
-    bash scripts/vllm/serve_qwen.sh "$MODEL" "${NUM_GPUS}" "${PORT}" &
+    bash "$REPO_ROOT/scripts/vllm/serve_qwen.sh" "$MODEL" "${NUM_GPUS}" "${PORT}" &
+    VLLM_PID=$!
+    STARTED_VLLM=1
     sleep 5  # brief pause before checking
   fi
 
   # ----------------------------------------------------------------
-  # 2) Wait for the vllm server to be reachable on port 8000
+  # 2) Wait for the vllm server to be reachable on the requested port.
   #    We'll try up to 30 times, sleeping 5 seconds each time.
   # ----------------------------------------------------------------
   echo "[INFO] Please wait for vllm server to be responsive..."
   for i in {1..360}; do
-    if curl --max-time 2 -s -o /dev/null http://localhost:9001/v1/models; then
+    if curl --max-time 2 -sf -H "Authorization: Bearer qwen" -o /dev/null "http://localhost:${PORT}/v1/models"; then
       echo "[INFO] vllm server is up!"
       break
     else
@@ -131,15 +212,16 @@ python -m src.vlmsearch \
     --seed 42 \
     --judge ${JUDGE} \
     --search_method mcts \
-    --max_depth 10 \
-    --n_simulations 8 \
+    --max_depth ${MCTS_MAX_DEPTH} \
+    --n_simulations ${MCTS_N_SIMULATIONS} \
+    --rollout_max_steps ${MCTS_ROLLOUT_MAX_STEPS} \
     --temperature 1.0 \
     --top_p 1.0 \
-    --max_new_tokens 512 \
-    --checkpoint_interval 1 \
+    --max_new_tokens ${MCTS_MAX_NEW_TOKENS} \
+    --checkpoint_interval ${MCTS_CHECKPOINT_INTERVAL} \
     --save_rollouts \
-    --n_rollouts_per_node 2 \
-    --num_children_per_expand 3 \
+    --n_rollouts_per_node ${MCTS_N_ROLLOUTS_PER_NODE} \
+    --num_children_per_expand ${MCTS_NUM_CHILDREN_PER_EXPAND} \
     --c_puct 2.0 \
     --save_rollouts_dir "data/mcts" \
     --add_thought_number_system_prompt \
@@ -147,4 +229,5 @@ python -m src.vlmsearch \
     --pretrained "${MODEL}" \
     --image_root "${IMAGE_ROOT}" \
     --data_files "${DATA_FILE}" \
-    --save_tag "${SAVE_TAG}"
+    --save_tag "${SAVE_TAG}" \
+    "${OPTIONAL_ARGS[@]}"

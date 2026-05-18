@@ -17,6 +17,7 @@ import openai
 from openai import AzureOpenAI, AsyncAzureOpenAI
 import os
 import logging
+import re
 import wandb  # Added import for Weights & Biases
 
 logger = logging.getLogger(__name__)
@@ -508,6 +509,13 @@ class Judge:
         
         """
 
+        gt_binary = self._normalize_binary_option_answer(gt_ans)
+        pred_binary = self._normalize_binary_option_answer(pred_ans)
+        if gt_binary in {"yes", "no"} and pred_binary in {"yes", "no"}:
+            score = 1.0 if gt_binary == pred_binary else 0.0
+            logger.debug(f"Judge response : {score}")
+            return score
+
         #Accounitng for the fact that the answers may be in different cases
         gt_ans = gt_ans.lower()
 
@@ -520,6 +528,29 @@ class Judge:
         else:
             logger.debug(f"Judge response : 0.0")
             return 0.0
+
+    def _normalize_binary_option_answer(self, ans: str) -> str:
+        answer_matches = re.findall(r"<answer>\s*(.*?)\s*</answer>", ans, flags=re.DOTALL | re.IGNORECASE)
+        if answer_matches:
+            ans = answer_matches[-1]
+
+        normalized = ans.strip().lower()
+        normalized = re.sub(r"^[\s\"'{}\[\]()]+|[\s\"'{}\[\]().!,;:]+$", "", normalized)
+        choice_match = re.match(r"^([ab])\s*[\.)]?\s*(.*)$", normalized)
+        if choice_match:
+            choice, rest = choice_match.groups()
+            rest = rest.strip()
+            if not rest or rest in {"yes", "no"}:
+                return "yes" if choice == "a" else "no"
+
+        if normalized in {"yes", "no"}:
+            return normalized
+
+        yes_no_match = re.search(r"\b(yes|no)\b", normalized)
+        if yes_no_match:
+            return yes_no_match.group(1)
+
+        return normalized
     
     def _check_gt_ans_yes_no(self, gt_ans: str) -> bool:
 

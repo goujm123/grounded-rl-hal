@@ -1,3 +1,4 @@
+import argparse
 import json
 from typing import List, Dict, Any
 import os
@@ -9,12 +10,55 @@ import wandb
 import ast
 from PIL import ImageDraw
 import re
+from pathlib import Path
+
+
 random.seed(42)
+
+
+ANSWER_TAG_PATTERN = re.compile(r"(<answer>\s*)(.*?)(\s*</answer>)", re.IGNORECASE | re.DOTALL)
+
+
+def normalize_amber_question_prompt(question: str) -> str:
+    return question.replace("Answer with the text of the option.", "Answer with the option letter only.")
+
+
+def answer_to_amber_option(answer: str) -> str | None:
+    normalized = answer.strip().lower()
+    normalized = re.sub(r"^[\s\"'{}\[\]()]+|[\s\"'{}\[\]().!,;:]+$", "", normalized)
+
+    choice_match = re.match(r"^([ab])\s*[\.)]?\s*(.*)$", normalized)
+    if choice_match:
+        choice, rest = choice_match.groups()
+        rest = rest.strip()
+        if not rest or rest in {"yes", "no"}:
+            return choice.upper()
+
+    if normalized == "yes":
+        return "A"
+    if normalized == "no":
+        return "B"
+
+    yes_no_match = re.search(r"\b(yes|no)\b", normalized)
+    if yes_no_match:
+        return "A" if yes_no_match.group(1) == "yes" else "B"
+
+    return None
+
+
+def convert_amber_answer_tags(chain_text: str) -> str:
+    def replace_answer(match: re.Match) -> str:
+        option = answer_to_amber_option(match.group(2))
+        if option is None:
+            return match.group(0)
+        return f"{match.group(1)}{option}{match.group(3)}"
+
+    return ANSWER_TAG_PATTERN.sub(replace_answer, chain_text)
 
 # ---------------------------------------------------------------------------
 # 1) Helpers to build reasoning chains from your MCTS data
 # ---------------------------------------------------------------------------
-def process_text_chain(chain: List[str]) -> (str, str):
+def process_text_chain(chain: List[str]) -> tuple[str, str]:
     """
     1. Removes first line of chain if it contains the word "<image>"
     2. Removes <think>, </think>, <answer>, </answer>
@@ -100,7 +144,7 @@ def build_reasoning_chains_from_rollouts(
     return all_chains
 
 
-def build_all_reasoning_for_sample(sample_json: Dict[str, Any]) -> (List[str], float):
+def build_all_reasoning_for_sample(sample_json: Dict[str, Any]) -> tuple[List[str], float]:
     """
     Build all possible reasoning chains from the top-level 'tree' in sample_json.
     Returns (list_of_chains, root_node_value).
@@ -140,15 +184,66 @@ def extract_think_points(chain_text: str):
 
     return all_points
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Linearize MCTS rollout trees into SFT reasoning-chain data.")
+    parser.add_argument(
+        "--input",
+        default="data/mcts/MCTS_AMBER_72b_20260424_103335",
+        help="Rollout JSONL file or directory containing rollouts_*.jsonl files.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory for output files. Defaults to <input-dir>/reasoning_chains.",
+    )
+    parser.add_argument(
+        "--prompt-type",
+        choices=["amber", "web_grounding", "spatial", "web_action", "vstar"],
+        default="amber",
+    )
+    parser.add_argument(
+        "--val-size",
+        type=float,
+        default=0.05,
+        help="Validation split. Use <1 for a fraction, or >=1 for an absolute sample count.",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--max-chains-per-sample", type=int, default=10000)
+    parser.add_argument("--train-output-name", default="reasoning_chains_train.json")
+    parser.add_argument("--val-output-name", default="reasoning_chains_val.json")
+    parser.add_argument("--log-to-wandb", action="store_true")
+    parser.add_argument("--no-draw-points", action="store_true")
+    return parser.parse_args()
+
+
+def collect_data_files(input_path: str) -> list[Path]:
+    path = Path(input_path)
+    if path.is_dir():
+        rollout_files = sorted(path.glob("rollouts_*.jsonl"))
+        if rollout_files:
+            return rollout_files
+        return sorted(p for p in path.glob("*.jsonl") if not p.name.startswith("errors_"))
+    return [path]
+
+
+def resolve_output_dir(input_path: str, output_dir: str | None) -> Path:
+    if output_dir:
+        return Path(output_dir)
+    path = Path(input_path)
+    base_dir = path if path.is_dir() else path.parent
+    return base_dir / "reasoning_chains"
+
 # ---------------------------------------------------------------------------
 # 2) Main script
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # -----------------------------------------------------------------------
-    # Adjust this as needed
-    data_str = "path/to/rollouts" # TODO: change this to the path to the rollouts
-    log_to_wandb = True
-    prompt_type = "web_grounding" # "web_grounding", "spatial", "web_action"
+    args = parse_args()
+    rng = random.Random(args.seed)
+    data_str = args.input
+    log_to_wandb = args.log_to_wandb
+    prompt_type = args.prompt_type
 
     system_prompt_web_grounding = "A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant systematically reasons through the problem step by step, verifying each step and grounding every step to a specific point in the image.\n\nAll reasoning processes must be enclosed within a single set of '<think>' tags, with each reasoning step explicitly referencing a coordinate:\n\n<think>\n[Reasoning text with grounded points inline] (x1, y1). [Further reasoning] (x2, y2), [Final refinement] (x3, y3).\n</think>\n\nThe final answer should be enclosed in '<answer>' tags in the format:\n<answer> (xf, yf) </answer>\n\nYour task is to help the user identify the precise coordinates (x, y) of a specific area/element/object on the screen based on a description.\n- Aim to point to the center or a representative point within the described area/element/object as accurately as possible.\n- If the description is unclear or ambiguous, infer the most relevant area or element based on its likely context or purpose.\n- The final output should be the single most precise coordinate for the requested element.\n- The Assistant should verify each step and check multiple possible solutions before selecting the final answer."
 
@@ -171,7 +266,32 @@ Instructions:
 - Reason about a region's relevance to the question and—if visible—its relation to prior steps.
 - Aim to choose accurate, representative coordinates within each region."""
 
-    if prompt_type == "web_grounding":
+    system_prompt_amber="""A conversation between User and Assistant. The User asks a yes/no multiple-choice question about an image, and the Assistant answers by carefully verifying whether the claim is supported by visible evidence.
+
+The Assistant must first reason inside a single <think> section, then provide the final answer inside an <answer> section. The reasoning should use coordinates as evidence anchors for the visible regions being checked.
+
+The final answer must be exactly one of:
+<answer> A </answer>
+<answer> B </answer>
+
+Rules:
+- Base the answer only on visible evidence in the image.
+- Ground each relevant evidence check with a representative absolute image coordinate formatted as (x, y).
+- Coordinates are evidence anchors for reasoning, not the final answer.
+- For existence questions, verify whether the queried object is actually visible and distinguish it from similar objects.
+- For attribute questions, verify the specific property directly from the image.
+- For relation questions, verify both entities first, then verify the claimed relation.
+- Use the checked visual evidence to choose the better-supported option letter.
+- Answer A when the claim is supported by visible evidence.
+- Answer B when the claim is contradicted or not supported by visible evidence.
+- If the evidence is ambiguous, still choose A or B based on the strongest visible evidence; do not answer "I don't know."
+- If the user prompt asks for the text of the option, still follow this system instruction and answer with the option letter only.
+- Do not use world knowledge to infer details that are not visible.
+- The <answer> section must contain only A or B."""
+
+    if prompt_type == "amber":
+        system_prompt = system_prompt_amber
+    elif prompt_type == "web_grounding":
         system_prompt = system_prompt_web_grounding
     elif prompt_type == "spatial":
         system_prompt = system_prompt_spatial
@@ -183,120 +303,124 @@ Instructions:
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
 
-    # What fraction or number of val samples do we want:
-    val_size = 0.05  # 10% for val, for example
-    draw_points = True
-    max_samples_per_file = 10000
+    val_size = args.val_size
+    draw_points = not args.no_draw_points
+    max_chains_per_sample = args.max_chains_per_sample
 
-    # -----------------------------------------------------------------------
-
-    # 1) Gather all .jsonl files from data_str (if it's a folder)
-    if os.path.isdir(data_str):
-        data_files = [os.path.join(data_str, f) for f in os.listdir(data_str) if f.endswith(".jsonl")]
-    else:
-        data_files = [data_str]
+    data_files = collect_data_files(data_str)
 
     # We'll store:
     # - all textual chains to write to a .txt file
     # - for each chain, we create a separate SFT entry
     all_chains_text = []
-    sft_entries_train = []
-    sft_entries_val = []
+    sample_entry_groups = []
     all_images_processed = set()
     chain_global_id = 0
     correct_count = 0
-
-    # split data_files into two lists: train and val based on the val_size
-    train_files = data_files[:int(len(data_files) * (1 - val_size))]
-    val_files = data_files[int(len(data_files) * (1 - val_size)):]
+    total_samples = 0
 
     for i, data_file in enumerate(data_files):
         with open(data_file, "r", encoding="utf-8") as f:
-            line = f.readline().strip()
-            if not line:
-                continue
-            data_json = json.loads(line)
+            for line_number, line in enumerate(f, start=1):
+                if args.max_samples is not None and total_samples >= args.max_samples:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                data_json = json.loads(line)
 
-        error = data_json.get("error", "")
-        if error:
-            print(f"error processing {data_file}: {error}")
-            continue
+                error = data_json.get("error", "")
+                if error:
+                    print(f"error processing {data_file}:{line_number}: {error}")
+                    continue
 
-        question = data_json.get("question", "")
-        image = data_json.get("image", "")
-        system_prompt_MCTS = data_json.get("system_prompt", "")
-        true_answer = data_json.get("true_answer", "")
-        # tree, etc...
-        chains, root_node_value = build_all_reasoning_for_sample(data_json)
-        if root_node_value > 0:
-            correct_count += 1
+                question = data_json.get("question", "")
+                if prompt_type == "amber":
+                    question = normalize_amber_question_prompt(question)
+                image = data_json.get("image", "")
+                true_answer = data_json.get("true_answer", "")
+                gt_answer = answer_to_amber_option(true_answer) if prompt_type == "amber" else true_answer
+                if gt_answer is None:
+                    gt_answer = true_answer
+                chains, root_node_value = build_all_reasoning_for_sample(data_json)
+                total_samples += 1
+                if root_node_value > 0:
+                    correct_count += 1
 
-        if len(chains) > max_samples_per_file:
-            chains = random.sample(chains, max_samples_per_file)
+                if len(chains) > max_chains_per_sample:
+                    chains = rng.sample(chains, max_chains_per_sample)
 
-        # For each chain, we treat it as a separate SFT training example
-        for c in chains:
-            # We'll store in a text file
-            all_chains_text.append(c)
+                sample_entries = []
+                for c in chains:
+                    if c.count("<image>") > 0:
+                        c = c.replace("<image>", "").replace("</image>", "")
+                    if prompt_type == "amber":
+                        c = convert_amber_answer_tags(c)
 
-            # check if more than 1 "<image>" in question
-            if c.count("<image>") > 0:
-                # remove all "<image>" tags
-                c = c.replace("<image>", "").replace("</image>", "")
+                    all_chains_text.append(c)
 
-            # SFT-style record:
-            #   "messages": [
-            #       {"role": "system", "content": system_prompt},
-            #       {"role": "user",   "content": question},
-            #       {"role": "assistant", "content": c}
-            #   ]
-            #   "images": [image]
-            chain_entry = {
-                "id": f"{i}_{chain_global_id}",
-                "metadata": {},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": question
-                    },
-                    {
-                        "role": "assistant",
-                        "content": c
+                    chain_entry = {
+                        "id": f"{i}_{line_number}_{chain_global_id}",
+                        "metadata": {},
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": system_prompt
+                            },
+                            {
+                                "role": "user",
+                                "content": question
+                            },
+                            {
+                                "role": "assistant",
+                                "content": c
+                            }
+                        ],
+                        "images": [image],
+                        "gt_answer": gt_answer,
                     }
-                ],
-                "images": [image],
-                "gt_answer": true_answer,
-            }
-            if data_file in train_files:
-                sft_entries_train.append(chain_entry)
-                if image not in all_images_processed:
+                    sample_entries.append(chain_entry)
                     all_images_processed.add(image)
-            else:
-                sft_entries_val.append(chain_entry)
-                if image not in all_images_processed:
-                    all_images_processed.add(image)
-            chain_global_id += 1
+                    chain_global_id += 1
+
+                if sample_entries:
+                    sample_entry_groups.append(sample_entries)
+        if args.max_samples is not None and total_samples >= args.max_samples:
+            break
         
-    total_samples = len(data_files)
     if total_samples == 0:
         print("No samples found. Exiting.")
         exit()
 
+    sample_indices = list(range(len(sample_entry_groups)))
+    rng.shuffle(sample_indices)
+    if val_size < 1:
+        val_count = int(len(sample_indices) * val_size)
+    else:
+        val_count = int(val_size)
+    if len(sample_indices) > 1:
+        val_count = min(max(val_count, 1), len(sample_indices) - 1)
+    else:
+        val_count = 0
+    val_indices = set(sample_indices[:val_count])
+    sft_entries_train = []
+    sft_entries_val = []
+    for sample_idx, entries in enumerate(sample_entry_groups):
+        if sample_idx in val_indices:
+            sft_entries_val.extend(entries)
+        else:
+            sft_entries_train.extend(entries)
+
     accuracy = correct_count / total_samples
-    print(f"Processed {total_samples} input JSONL files.")
+    print(f"Processed {total_samples} rollout samples.")
     print(f"Root node correctness ratio: {accuracy:.3f} ({correct_count}/{total_samples})")
 
     # 2) Write out all chains to a text file
-    base_dir = os.path.dirname(data_files[0]) if data_files else os.path.dirname(data_str)
-    out_dir = os.path.join(base_dir, "reasoning_chains")
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir = resolve_output_dir(data_str, args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    txt_path = os.path.join(out_dir, "reasoning_chains.txt")
-    with open(txt_path, "w", encoding="utf-8") as f:
+    txt_path = out_dir / "reasoning_chains.txt"
+    with txt_path.open("w", encoding="utf-8") as f:
         sep = "\n\n----------------------\n\n----------------------\n\n"
         for ch in all_chains_text:
             f.write(ch + sep)
@@ -304,14 +428,14 @@ Instructions:
 
     # 3) Train/Val split at the chain level has been done during processing
 
-    train_json_path = os.path.join(out_dir, "reasoning_chains_train.json")
-    val_json_path = os.path.join(out_dir, "reasoning_chains_val.json")
+    train_json_path = out_dir / args.train_output_name
+    val_json_path = out_dir / args.val_output_name
 
-    with open(train_json_path, "w", encoding="utf-8") as f:
+    with train_json_path.open("w", encoding="utf-8") as f:
         json.dump(sft_entries_train, f, indent=2)
     print(f"Saved train SFT data to: {train_json_path}  (count={len(sft_entries_train)})")
 
-    with open(val_json_path, "w", encoding="utf-8") as f:
+    with val_json_path.open("w", encoding="utf-8") as f:
         json.dump(sft_entries_val, f, indent=2)
     print(f"Saved val SFT data to: {val_json_path}  (count={len(sft_entries_val)})")
 
@@ -321,7 +445,7 @@ Instructions:
         max_samples = 50
         # Shuffle the data
         sft_entries = sft_entries_train + sft_entries_val
-        random_indices = random.sample(range(len(sft_entries)), min(max_samples, len(sft_entries)))
+        random_indices = rng.sample(range(len(sft_entries)), min(max_samples, len(sft_entries)))
         html_content = "<html><body>"
         for idx in random_indices:
             entry = sft_entries[idx]

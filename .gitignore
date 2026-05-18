@@ -22,3 +22,15 @@ slurm/
 # Data and checkpoints
 data/
 checkpoints/
+
+# model files
+*.pt
+*.bin
+*.ckpt
+*.h5
+*.model
+*.onnx
+*.pb
+
+# Safetensor files
+*.safetensors
