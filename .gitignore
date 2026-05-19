@@ -34,3 +34,13 @@ checkpoints/
 
 # Safetensor files
 *.safetensors
+
+# PDFs and latex files
+*.pdf
+*.tex
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+reports/

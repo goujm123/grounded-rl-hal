@@ -783,5 +783,35 @@
       "assistant_tag": "assistant",
       "system_tag": "system"
     }
+  },
+  "amber_train_MCTS_20260517_163222_linearized_chains": {
+    "file_name": "mcts/MCTS_AMBER_72b_20260517_163222/reasoning_chains/reasoning_chains_train.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "amber_val_MCTS_20260517_163222_linearized_chains": {
+    "file_name": "mcts/MCTS_AMBER_72b_20260517_163222/reasoning_chains/reasoning_chains_val.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
 }
