@@ -6,6 +6,7 @@ __pycache__/
 *.txt
 *.log
 *.out
+vllm_logs/
 
 # JSON and compressed variants
 *.json
@@ -44,3 +45,12 @@ checkpoints/
 *.toc
 *.synctex.gz
 reports/
+
+# images
+*.png
+*.jpg
+
+# others
+demo/
+models/
+amber_original/
