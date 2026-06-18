@@ -22,3 +22,12 @@ slurm/
 # Data and checkpoints
 data/
 checkpoints/
+
+# Other files
+amber_original/
+models/
+reports/
+vllm_logs/
+
+# VSCode settings
+.vscode/
