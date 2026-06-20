@@ -28,6 +28,7 @@ amber_original/
 models/
 reports/
 vllm_logs/
+temp/
 
 # VSCode settings
 .vscode/
