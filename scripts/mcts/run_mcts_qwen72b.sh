@@ -1,12 +1,20 @@
 #!/bin/bash
 
-NUM_GPUS=8 # set this to >=4 for 72b models, 1-2 for 3b,7b models
-NUM_PROCESSES=10
-dataset="web_grounding" # sat2, web_grounding, vstar, web_action
-PORT=9001 # port for vllm server
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)    # get the directory of the current script (default: scripts/mcts)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of the repository (default: grounded-rl-hal)
+
+NUM_GPUS=${NUM_GPUS:-4} # set this to >=4 for 72b models, 1-2 for 3b,7b models
+NUM_PROCESSES=${NUM_PROCESSES:-8}
+dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
+
+DATA_ROOT="${DATA_ROOT:-/scratch/jjg6977/indie_projects/mllm_hallucination/grounded-rl-hal/data}"
+PORT=${PORT:-9011} # port for vllm server
 
 # export port so src/vlmsearch/models/qwen_vllm.py can find the vllm server
 export PORT
+
+# export DATA_ROOT so that src/vlmsearch/datasets can find the data files
+export DATA_ROOT
 
 if [ "$dataset" == "sat2" ]; then
   SYSTEM_PROMPT="""You are a helpful assistant tasked with answering a question about an image. You should systematically reason through the problem step by step by checking and verifying relevant image regions, while grounding reasoning steps to specific (x, y) points in the image:\nEach reasoning step must be enclosed within '<think>' tags and reference exactly one specific coordinate (x, y):\n<think>\n{Single reasoning step with a grounded point} (x, y).\n</think>\nWhen ready to provide the final answer, enclose it within '<answer>' tags:\n<answer> {text of final answer} </answer>\nYour task is to help the user answer the question that may involve small details in the image.\n- Generate ONLY ONE reasoning step OR the final answer per response.\n- Regions are distinct, non-overlapping areas (e.g., quadrants like top-left, small elements or objects, zones like background/foreground).\n- Each step should describe the region then evaluate it for its relevance to the task and to previous steps.\n- Never repeat coordinates from previous steps.\n- Begin by exploring diverse regions, even if they seem less likely, to ensure comprehensive coverage before narrowing down.\n- Prioritize broad coverage of diverse candidates before deciding.\n- Aim for accurate, representative points in the described area/element/object.\n- If unclear, infer based on likely context or purpose.\n- Your final answer should be the text of the choice you think is most correct.\n- Verify each step by examining multiple possible solutions before selecting a final coordinate.\n- Format points as (x, y)"""
@@ -63,10 +71,44 @@ To be successful, it is very important to follow the following rules:
 
   SAVE_TAG="MCTS_WEB_ACTION_72b"
   JUDGE="web_action"
+
+elif [ "$dataset" == "amber_discriminative" ]; then
+  SYSTEM_PROMPT="""You are a careful visual verifier answering a yes/no multiple-choice question about an image.
+Your goal is to determine whether the claim in the question is supported by visible evidence in the image.
+
+You should reason step by step by checking relevant image regions and verifying evidence for the queried object, attribute, count, action, or relation.
+
+Each reasoning step must be enclosed within think tags. When useful, reference one representative coordinate (x, y) for the region being checked. These coordinates are evidence anchors, not the final answer.
+
+<think>
+{Check one region and describe the visible evidence with a grounded point (x, y)}.
+</think>
+
+When you are ready to answer, output only:
+<answer> yes </answer>
+or
+<answer> no </answer>
+
+Rules:
+
+- Generate only one reasoning step or the final answer per response.
+- Base each step on visible evidence from the image.
+- For existence questions, verify whether the queried object is actually visible and distinguish it from similar objects.
+- For attribute questions, verify the specific property directly from the image rather than assuming it.
+- For relation questions, verify both entities first, then verify the claimed relation.
+- Use the checked visual evidence to choose the better-supported option letter.
+- Do not use world knowledge to infer details that are not visible.
+- If you mention coordinates, avoid repeating the same point unless you are explicitly re-checking that evidence.
+"""
+
+  DATA_FILE="$DATA_ROOT/mllm_hal/amber_discriminative_MCTS.jsonl"
+  SAVE_TAG="MCTS_AMBER_72b"
+  JUDGE="string_match"
+
 fi
 
 IMAGE_ROOT=$DATA_ROOT
-MODEL="Qwen/Qwen2.5-VL-72B-Instruct"
+MODEL="${MODEL:-Qwen/Qwen2.5-VL-72B-Instruct}"
 
 ACTOR_MODEL="qwen_vllm"
 
