@@ -148,10 +148,10 @@ trap cleanup EXIT INT TERM
 #    Then wait for it to become reachable.
 # ---------------------------------------------------------------------
 if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
-  # Simple check: see if something is already listening on port 8000
+  # Simple check: see if something is already listening on the configured port
   # or if "vllm serve" is in the process list
-  if lsof -Pi :9001 -sTCP:LISTEN -t >/dev/null 2>&1 || pgrep -f "vllm serve" >/dev/null 2>&1; then
-    echo "[INFO] vllm server is already running on port 9001"
+  if lsof -Pi :${PORT} -sTCP:LISTEN -t >/dev/null 2>&1 || pgrep -f "vllm serve" >/dev/null 2>&1; then
+    echo "[INFO] vllm server is already running on port ${PORT}"
   else
     echo "[INFO] Starting vllm server via serve_qwen.sh ..."
     echo "[INFO] VLLM logs saving to vllm_logs/ ..."
@@ -166,7 +166,7 @@ if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
   # ----------------------------------------------------------------
   echo "[INFO] Please wait for vllm server to be responsive..."
   for i in {1..360}; do
-    if curl --max-time 2 -s -o /dev/null http://localhost:9001/v1/models; then
+    if curl --max-time 2 -s -o /dev/null http://localhost:${PORT}/v1/models; then
       echo "[INFO] vllm server is up!"
       break
     else
