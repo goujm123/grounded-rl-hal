@@ -7,13 +7,22 @@ NUM_GPUS=${NUM_GPUS:-4} # set this to >=4 for 72b models, 1-2 for 3b,7b models
 NUM_PROCESSES=${NUM_PROCESSES:-8}
 dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
 
-DATA_ROOT="${DATA_ROOT:-/scratch/jjg6977/indie_projects/mllm_hallucination/grounded-rl-hal/data}"
-PORT=${PORT:-9011} # port for vllm server
+# MCTS-related parameters
+SEARCH_METHOD="${SEARCH_METHOD:-mcts}"
+MAX_DEPTH=${MAX_DEPTH:-10}
+N_SIMULATIONS=${N_SIMULATIONS:-8}
+CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-1}
+N_ROLLOUTS_PER_NODE=${N_ROLLOUTS_PER_NODE:-2}
+NUM_CHILDREN_PER_EXPAND=${NUM_CHILDREN_PER_EXPAND:-3}
+C_PUCT=${C_PUCT:-2.0}
+SAVE_ROLLOUTS_DIR="${SAVE_ROLLOUTS_DIR:-data/mcts}"
 
 # export port so src/vlmsearch/models/qwen_vllm.py can find the vllm server
+PORT=${PORT:-9011} # port for vllm server
 export PORT
 
 # export DATA_ROOT so that src/vlmsearch/datasets can find the data files
+DATA_ROOT="${DATA_ROOT:-/scratch/jjg6977/indie_projects/mllm_hallucination/grounded-rl-hal/data}"
 export DATA_ROOT
 
 if [ "$dataset" == "sat2" ]; then
@@ -102,8 +111,15 @@ Rules:
 """
 
   DATA_FILE="$DATA_ROOT/mllm_hal/amber_discriminative_MCTS.jsonl"
-  SAVE_TAG="MCTS_AMBER_72b"
+  SAVE_TAG="MCTS_AMBER_DISCRIMINATIVE_72b"
   JUDGE="string_match"
+
+# TODO: Add a system prompt and judge for amber_generative dataset
+elif [ "$dataset" == "amber_generative" ]; then
+  SYSTEM_PROMPT=""" """
+  DATA_FILE="$DATA_ROOT/mllm_hal/amber_generative_MCTS.jsonl"
+  SAVE_TAG="MCTS_AMBER_GENERATIVE_72b"
+  JUDGE=""
 
 fi
 
@@ -172,18 +188,18 @@ python -m src.vlmsearch \
     --model ${ACTOR_MODEL} \
     --seed 42 \
     --judge ${JUDGE} \
-    --search_method mcts \
-    --max_depth 10 \
-    --n_simulations 8 \
+    --search_method ${SEARCH_METHOD} \
+    --max_depth ${MAX_DEPTH} \
+    --n_simulations ${N_SIMULATIONS} \
     --temperature 1.0 \
     --top_p 1.0 \
     --max_new_tokens 512 \
-    --checkpoint_interval 1 \
+    --checkpoint_interval ${CHECKPOINT_INTERVAL} \
     --save_rollouts \
-    --n_rollouts_per_node 2 \
-    --num_children_per_expand 3 \
-    --c_puct 2.0 \
-    --save_rollouts_dir "data/mcts" \
+    --n_rollouts_per_node ${N_ROLLOUTS_PER_NODE} \
+    --num_children_per_expand ${NUM_CHILDREN_PER_EXPAND} \
+    --c_puct ${C_PUCT} \
+    --save_rollouts_dir "${SAVE_ROLLOUTS_DIR}" \
     --add_thought_number_system_prompt \
     --system_prompt "${SYSTEM_PROMPT}" \
     --pretrained "${MODEL}" \
