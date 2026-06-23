@@ -3,15 +3,18 @@
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)    # get the directory of the current script (default: scripts/mcts)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of the repository (default: grounded-rl-hal)
 
+# Set important environment variables
 NUM_GPUS=${NUM_GPUS:-4} # set this to >=4 for 72b models, 1-2 for 3b,7b models
 NUM_PROCESSES=${NUM_PROCESSES:-8}
 dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-4,5,6,7} # set this to the GPUs you want to use
+export CUDA_VISIBLE_DEVICES
 
 # MCTS-related parameters
 SEARCH_METHOD="${SEARCH_METHOD:-mcts}"
 MAX_DEPTH=${MAX_DEPTH:-10}
 N_SIMULATIONS=${N_SIMULATIONS:-8}
-CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-1}
+CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-50}              # save rollouts every N steps (default: 50, originally 1)
 N_ROLLOUTS_PER_NODE=${N_ROLLOUTS_PER_NODE:-2}
 NUM_CHILDREN_PER_EXPAND=${NUM_CHILDREN_PER_EXPAND:-3}
 C_PUCT=${C_PUCT:-2.0}
@@ -156,7 +159,7 @@ if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
     echo "[INFO] Starting vllm server via serve_qwen.sh ..."
     echo "[INFO] VLLM logs saving to vllm_logs/ ..."
     # You can pass $MODEL and GPU count from environment or SLURM variables
-    bash scripts/vllm/serve_qwen.sh "$MODEL" "${NUM_GPUS}" "${PORT}" &
+    bash scripts/vllm/serve_qwen.sh "$MODEL" "${NUM_GPUS}" "${PORT}" "${CUDA_VISIBLE_DEVICES}" &
     sleep 5  # brief pause before checking
   fi
 

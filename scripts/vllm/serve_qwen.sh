@@ -4,6 +4,7 @@
 CHECKPOINT_PATH=$1
 NUM_GPUS=$2
 PORT=$3
+CUDA_VISIBLE_DEVICES=$4
 
 # # Check if checkpoint path exists
 # if [ ! -e "$CHECKPOINT_PATH" ]; then
@@ -13,6 +14,8 @@ PORT=$3
 
 echo "CHECKPOINT_PATH: $CHECKPOINT_PATH"
 echo "NUM_GPUS: $NUM_GPUS"
+echo "PORT: $PORT"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 mkdir -p vllm_logs
 
