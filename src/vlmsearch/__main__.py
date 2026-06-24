@@ -348,7 +348,7 @@ def main():
                     true_answer=sample["true_answer"],
                 )
             except openai.OpenAIError as e:
-                logging.error(f"OpenAIError: {e}")
+                logging.error(f"OpenAIError: {e}")t
             except Exception as e:
                 traceback.print_exc()
                 logging.error(f"Error in search: {e}")
