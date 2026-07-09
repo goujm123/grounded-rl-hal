@@ -5,18 +5,18 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of th
 
 # Set important environment variables
 NUM_GPUS=${NUM_GPUS:-4} # set this to >=4 for 72b models, 1-2 for 3b,7b models
-NUM_PROCESSES=${NUM_PROCESSES:-4}
+NUM_PROCESSES=${NUM_PROCESSES:-10}
 dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-4,5,6,7} # set this to the GPUs you want to use
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3} # set this to the GPUs you want to use
 export CUDA_VISIBLE_DEVICES
 
 # MCTS-related parameters
 SEARCH_METHOD="${SEARCH_METHOD:-mcts}"
 MAX_DEPTH=${MAX_DEPTH:-10}                                    # maximum depth of the search tree (originally 10)
-N_SIMULATIONS=${N_SIMULATIONS:-8}                             # number of simulations to run per node during MCTS (originally 8)
+N_SIMULATIONS=${N_SIMULATIONS:-2}                             # number of simulations to run per node during MCTS (originally 8)
 CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-1}
 N_ROLLOUTS_PER_NODE=${N_ROLLOUTS_PER_NODE:-2}                 # number of rollouts to perform per node during MCTS (originally 2)
-NUM_CHILDREN_PER_EXPAND=${NUM_CHILDREN_PER_EXPAND:-3}         # number of children to expand per node during MCTS (originally 3)
+NUM_CHILDREN_PER_EXPAND=${NUM_CHILDREN_PER_EXPAND:-2}         # number of children to expand per node during MCTS (originally 3)
 C_PUCT=${C_PUCT:-2.0}                                         # exploration constant for MCTS (originally 2.0)
 SAVE_ROLLOUTS_DIR="${SAVE_ROLLOUTS_DIR:-data/mcts}"
 
