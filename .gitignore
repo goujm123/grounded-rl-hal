@@ -29,6 +29,7 @@ models/
 reports/
 vllm_logs/
 temp/
+*.zip
 
 # VSCode settings
 .vscode/
