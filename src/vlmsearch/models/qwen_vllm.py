@@ -1,5 +1,6 @@
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 import os
+import sys
 import base64
 from PIL import Image
 from io import BytesIO
@@ -10,12 +11,14 @@ import logging
 # Configure logging to suppress debug messages for this module
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger(__name__).setLevel(logging.WARNING)
-TIMEOUT = 60
+TIMEOUT = float(os.getenv("QWEN_VLLM_TIMEOUT", "360"))
+BASE_URL = f"http://localhost:{os.getenv('PORT', '9011')}/v1"
 
 client = OpenAI(
     api_key="qwen",
-    base_url=f"http://localhost:{os.getenv('PORT', '9001')}/v1",
+    base_url=BASE_URL,
     timeout=TIMEOUT,
+    max_retries=0,
 )
 
 class Qwen_VLLM():
@@ -233,19 +236,26 @@ class Qwen_VLLM():
         else:
             temperature = self.temperature
 
-        completion = client.chat.completions.create(
-            model="qwen_vllm",
-            messages=messages,
-            max_tokens=self.max_new_tokens,
-            temperature=temperature,
-            top_p=self.top_p,
-            extra_body={
-                "continue_final_message": continue_final_message, 
-                "add_generation_prompt": add_generation_prompt,
-                "repetition_penalty": self.repetition_penalty
-                }
-        )
-        answer = completion.choices[0].message.content
+        try:
+            completion = client.chat.completions.create(
+                model="qwen_vllm",
+                messages=messages,
+                max_tokens=self.max_new_tokens,
+                temperature=temperature,
+                top_p=self.top_p,
+                extra_body={
+                    "continue_final_message": continue_final_message,
+                    "add_generation_prompt": add_generation_prompt,
+                    "repetition_penalty": self.repetition_penalty
+                    }
+            )
+        except OpenAIError as exc:
+            raise RuntimeError(
+                f"vLLM request to {BASE_URL} failed or timed out after {TIMEOUT:g}s. "
+                "Check the latest vllm_logs/vllm_logfile_*.txt for server-side errors."
+            ) from exc
+
+        answer = completion.choices[0].message.content or ""
 
         if add_answer_begin and self.final_token_begin not in answer:
             answer = f"{self.final_token_begin}{answer}"
@@ -262,3 +272,39 @@ class Qwen_VLLM():
         raise NotImplementedError("TODO: Implement multi-round generation")
 
         
+if __name__ == "__main__":
+    image_path = "data/mllm_hal/images/AMBER_152.jpg"
+    question = "Is the floor yellow in this image?"
+
+    system_prompt = """You are a careful visual verifier answering a yes/no question about an image.
+    When ready to answer, output only:
+    <answer> yes </answer>
+    or
+    <answer> no </answer>
+    """
+    image = Image.open(image_path)
+
+    model = Qwen_VLLM(
+        max_new_tokens=512,
+        temperature=0.0,
+        top_p=1.0,
+        thought_token_begin="<think>",
+        thought_token_end="</think>",
+        final_token_begin="<answer>",
+        final_token_end="</answer>",
+        repetition_penalty=1.05,
+    )
+
+    print(f"Sending request to {BASE_URL} ...", file=sys.stderr, flush=True)
+
+    response = model.generate_single_thought(
+        system_prompt=system_prompt,
+        previous_thoughts=[(question, image)],
+        force_final=False,
+        no_sample=True,
+    )
+
+    if response.strip():
+        print(response, flush=True)
+    else:
+        print("[empty response from model]", file=sys.stderr, flush=True)
