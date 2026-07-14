@@ -22,6 +22,7 @@ slurm/
 # Data and checkpoints
 data/
 checkpoints/
+*.safetensors
 
 # Other files
 amber_original/
