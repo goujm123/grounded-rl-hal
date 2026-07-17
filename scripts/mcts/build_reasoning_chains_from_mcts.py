@@ -1,414 +1,515 @@
+import argparse
+import base64
+import html
 import json
-from typing import List, Dict, Any
 import os
 import random
-from PIL import Image
-from io import BytesIO
-import base64
-import wandb
-import ast
-from PIL import ImageDraw
 import re
-random.seed(42)
+from collections import Counter, defaultdict
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Tuple
 
-# ---------------------------------------------------------------------------
-# 1) Helpers to build reasoning chains from your MCTS data
-# ---------------------------------------------------------------------------
-def process_text_chain(chain: List[str]) -> (str, str):
-    """
-    1. Removes first line of chain if it contains the word "<image>"
-    2. Removes <think>, </think>, <answer>, </answer>
-    3. Joins the chain together
-    4. Returns (joined_chain, final_answer)
-    """
-
-    if chain and (chain[0].startswith("<image>") or chain[0].endswith("<image>")):
-        chain = chain[1:]
-
-    final_answer = chain[-1]
-    final_answer = final_answer.replace("<answer>", "").replace("</answer>", "").strip()
-    chain = chain[:-1]
-
-    # Remove any <think>, </think>, etc. from the lines
-    cleaned = []
-    for line in chain:
-        line = line.replace("<think>", "").replace("</think>", "")
-        line = line.replace("<answer>", "").replace("</answer>", "")
-        cleaned.append(line.strip())
-
-    joined_chain = " ".join(cleaned)
-    return joined_chain, final_answer
+try:
+    import wandb
+except ImportError:
+    wandb = None
+from PIL import Image, ImageDraw
 
 
-def build_reasoning_chains_from_rollouts(
-    node_data: Dict[str, Any],
-    backtrack_message: str = "Wait, this seems off. Let's try something else.",
-    thought_start_tag: str = "<think>",
-    thought_end_tag: str = "</think>",
-    answer_start_tag: str = "<answer>",
-    answer_end_tag: str = "</answer>",
-) -> List[str]:
-    """
-    Return all possible reasoning chains from this node (recursively) as strings.
-    Each chain includes wrong attempts (if any) plus a backtrack message, then a correct attempt.
-    """
-    rollouts = node_data.get("rollouts", [])
-    correct_rollouts = []
-    wrong_rollouts = []
-    for r in rollouts:
-        if r["reward"] >= 1.0:
-            correct_rollouts.append(r)
-        else:
-            wrong_rollouts.append(r)
+ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
+THINK_RE = re.compile(r"<think>\s*(.*?)\s*</think>", flags=re.IGNORECASE | re.DOTALL)
+COORD_RE = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
 
-    child_nodes = node_data.get("children", [])
-    is_terminal = node_data.get("is_terminal", False)
+AMBER_DISCRIMINATIVE_SYSTEM_PROMPT = """You are a careful visual verifier answering a yes/no multiple-choice question about an image.
+Your goal is to determine whether the claim in the question is supported by visible evidence in the image.
 
-    all_chains = []
+You should reason step by step by checking relevant image regions and verifying evidence for the queried object, attribute, count, action, or relation.
 
-    # 1) Build chains from ephemeral rollouts at this node
-    #    (Wrong -> backtrack -> Correct) and also purely Correct
-    for wrong_r in wrong_rollouts:
-        wrong_chain, _ = process_text_chain(wrong_r["ephemeral_texts"])
-        # Insert a backtrack line after the wrong chain
-        wrong_chain += f"\n{backtrack_message}"
-        if correct_rollouts:
-            for correct_r in correct_rollouts:
-                correct_chain, correct_ans = process_text_chain(correct_r["ephemeral_texts"])
-                combined_chain = wrong_chain + "\n" + correct_chain
-                # Format it with <think> ... </think> plus <answer> ... </answer>:
-                combined_chain = (
-                    f"{thought_start_tag}\n{combined_chain}\n{thought_end_tag}\n"
-                    f"{answer_start_tag} {correct_ans} {answer_end_tag}"
-                )
-                all_chains.append(combined_chain)
+Each reasoning step must be enclosed within think tags. When useful, reference one representative coordinate (x, y) for the region being checked. These coordinates are evidence anchors, not the final answer.
 
-    for correct_r in correct_rollouts:
-        chain_text, final_ans = process_text_chain(correct_r["ephemeral_texts"])
-        chain_text = (
-            f"{thought_start_tag}\n{chain_text}\n{thought_end_tag}\n"
-            f"{answer_start_tag} {final_ans} {answer_end_tag}"
-        )
-        all_chains.append(chain_text)
+<think>
+{Check one region and describe the visible evidence with a grounded point (x, y)}.
+</think>
 
-    # 2) Recurse into children if not terminal
-    if not is_terminal:
-        for child in child_nodes:
-            child_chains = build_reasoning_chains_from_rollouts(child, backtrack_message)
-            all_chains.extend(child_chains)
+When you are ready to answer, output only:
+<answer> yes </answer>
+or
+<answer> no </answer>
 
-    return all_chains
+Rules:
+
+- Generate only one reasoning step or the final answer per response.
+- Base each step on visible evidence from the image.
+- For existence questions, verify whether the queried object is actually visible and distinguish it from similar objects.
+- For attribute questions, verify the specific property directly from the image rather than assuming it.
+- For relation questions, verify both entities first, then verify the claimed relation.
+- Use the checked visual evidence to choose the better-supported yes/no answer.
+- Do not use world knowledge to infer details that are not visible.
+- If you mention coordinates, avoid repeating the same point unless you are explicitly re-checking that evidence.
+"""
 
 
-def build_all_reasoning_for_sample(sample_json: Dict[str, Any]) -> (List[str], float):
-    """
-    Build all possible reasoning chains from the top-level 'tree' in sample_json.
-    Returns (list_of_chains, root_node_value).
-    """
-    root_node = sample_json["tree"]
+def normalize_yes_no_answer(text: Any) -> Optional[str]:
+    if text is None:
+        return None
+
+    answer = str(text).strip()
+    answer_match = ANSWER_RE.search(answer)
+    if answer_match:
+        answer = answer_match.group(1)
+
+    answer = answer.strip().lower()
+    answer = re.sub(r"^[\s\[{(]+|[\s\]})]+$", "", answer)
+    answer = re.sub(r"[\s.!,;:]+$", "", answer)
+    if answer in {"yes", "no"}:
+        return answer
+    return None
+
+
+def normalize_system_prompt(system_prompt: Optional[str]) -> str:
+    prompt = system_prompt or AMBER_DISCRIMINATIVE_SYSTEM_PROMPT
+    prompt = prompt.replace(
+        "Use the checked visual evidence to choose the better-supported option letter.",
+        "Use the checked visual evidence to choose the better-supported yes/no answer.",
+    )
+    prompt = prompt.replace("option letter", "yes/no answer")
+    return prompt
+
+
+def strip_image_tags(text: str) -> str:
+    return text.replace("<image>", "").replace("</image>", "").strip()
+
+
+def is_user_prompt_text(text: str, question: str) -> bool:
+    stripped_text = strip_image_tags(text)
+    stripped_question = strip_image_tags(question)
+    if stripped_text == stripped_question:
+        return True
+    return text.strip().startswith("<image>") and "Question:" in text
+
+
+def extract_reasoning_step(text: str) -> Optional[str]:
+    if not text or ANSWER_RE.search(text):
+        return None
+
+    think_blocks = [block.strip() for block in THINK_RE.findall(text) if block.strip()]
+    if think_blocks:
+        return "\n".join(think_blocks).strip()
+
+    cleaned = strip_image_tags(text)
+    cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned or None
+
+
+def normalize_rollout_chain(
+    rollout: Dict[str, Any],
+    question: str,
+    require_coordinate: bool = True,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    ephemeral_texts = rollout.get("ephemeral_texts") or []
+    if not ephemeral_texts:
+        return None, None, "missing_ephemeral_texts"
+
+    answer = normalize_yes_no_answer(rollout.get("final_answer"))
+    if answer is None:
+        for text in reversed(ephemeral_texts):
+            answer = normalize_yes_no_answer(text)
+            if answer is not None:
+                break
+    if answer is None:
+        return None, None, "invalid_final_answer"
+
+    reasoning_steps = []
+    for text in ephemeral_texts:
+        if is_user_prompt_text(text, question):
+            continue
+        step = extract_reasoning_step(text)
+        if step:
+            reasoning_steps.append(step)
+
+    reasoning = "\n".join(reasoning_steps).strip()
+    if not reasoning:
+        return None, None, "empty_think"
+    if require_coordinate and not COORD_RE.search(reasoning):
+        return None, None, "missing_coordinate"
+
+    chain_text = f"<think>\n{reasoning}\n</think>\n<answer> {answer} </answer>"
+    if chain_text.count("<answer>") != 1 or chain_text.count("</answer>") != 1:
+        return None, None, "nested_answer"
+    if "<image>" in chain_text or "</image>" in chain_text:
+        return None, None, "assistant_contains_image"
+
+    return chain_text, answer, None
+
+
+def iter_tree_rollouts(node_data: Dict[str, Any]):
+    for rollout in node_data.get("rollouts", []):
+        yield rollout
+    for child in node_data.get("children", []):
+        yield from iter_tree_rollouts(child)
+
+
+def build_all_reasoning_for_sample(
+    sample_json: Dict[str, Any],
+    require_coordinate: bool = True,
+) -> Tuple[List[Dict[str, Any]], float, Counter]:
+    root_node = sample_json.get("tree")
+    if not root_node:
+        return [], 0.0, Counter({"missing_tree": 1})
+
+    question = sample_json.get("question", "")
     root_node_value = root_node.get("value", 0.0)
-    chains = build_reasoning_chains_from_rollouts(root_node)
-    # Deduplicate if needed:
-    unique_chains = list(set(chains))
-    return unique_chains, root_node_value
+    chains = []
+    seen = set()
+    stats = Counter()
 
-# ---------------------------------------------------------------------------
-# 2) Helper to extract intermediate points from <think> text
-# ---------------------------------------------------------------------------
+    for rollout_idx, rollout in enumerate(iter_tree_rollouts(root_node)):
+        stats["rollouts_seen"] += 1
+        if rollout.get("reward", 0.0) < 1.0:
+            stats["skipped_non_positive_reward"] += 1
+            continue
+
+        stats["correct_rollouts_seen"] += 1
+        chain_text, final_answer, error = normalize_rollout_chain(
+            rollout,
+            question=question,
+            require_coordinate=require_coordinate,
+        )
+        if error:
+            stats[f"filtered_{error}"] += 1
+            continue
+        if chain_text in seen:
+            stats["filtered_duplicate_chain"] += 1
+            continue
+
+        seen.add(chain_text)
+        chains.append(
+            {
+                "chain": chain_text,
+                "final_answer": final_answer,
+                "rollout_idx": rollout_idx,
+                "reward": rollout.get("reward", 0.0),
+                "ephemeral_depth": rollout.get("ephemeral_depth"),
+                "depth": rollout.get("depth"),
+            }
+        )
+        stats["chains_kept"] += 1
+
+    return chains, root_node_value, stats
+
+
 def extract_think_points(chain_text: str):
-    """
-    Finds all <think>...</think> sections in chain_text, then extracts
-    every coordinate (x, y) from those sections in order.
-    Returns a list of (x, y, index).
-    """
-    # Find all <think> ... </think> blocks (could be multiple if there's a backtrack)
-    think_blocks = re.findall(r"<think>(.*?)</think>", chain_text, flags=re.DOTALL)
     all_points = []
     point_idx = 1
 
-    for block in think_blocks:
-        # Find coords of form (123, 456) or ( 123 , 456 )
-        coords = re.findall(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)", block)
-        for (x_str, y_str) in coords:
+    for block in THINK_RE.findall(chain_text):
+        for x_str, y_str in COORD_RE.findall(block):
             try:
                 x = float(x_str)
                 y = float(y_str)
                 all_points.append((x, y, point_idx))
                 point_idx += 1
-            except:
-                pass  # if there's a parse error, skip
+            except ValueError:
+                continue
 
     return all_points
 
-# ---------------------------------------------------------------------------
-# 2) Main script
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # -----------------------------------------------------------------------
-    # Adjust this as needed
-    data_str = "path/to/rollouts" # TODO: change this to the path to the rollouts
-    log_to_wandb = True
-    prompt_type = "web_grounding" # "web_grounding", "spatial", "web_action"
 
-    system_prompt_web_grounding = "A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant systematically reasons through the problem step by step, verifying each step and grounding every step to a specific point in the image.\n\nAll reasoning processes must be enclosed within a single set of '<think>' tags, with each reasoning step explicitly referencing a coordinate:\n\n<think>\n[Reasoning text with grounded points inline] (x1, y1). [Further reasoning] (x2, y2), [Final refinement] (x3, y3).\n</think>\n\nThe final answer should be enclosed in '<answer>' tags in the format:\n<answer> (xf, yf) </answer>\n\nYour task is to help the user identify the precise coordinates (x, y) of a specific area/element/object on the screen based on a description.\n- Aim to point to the center or a representative point within the described area/element/object as accurately as possible.\n- If the description is unclear or ambiguous, infer the most relevant area or element based on its likely context or purpose.\n- The final output should be the single most precise coordinate for the requested element.\n- The Assistant should verify each step and check multiple possible solutions before selecting the final answer."
+def parse_args():
+    parser = argparse.ArgumentParser(description="Linearize AMBER MCTS trees into ShareGPT SFT data.")
+    parser.add_argument(
+        "--data-str",
+        default="data/mcts/MCTS_AMBER_DISCRIMINATIVE_72b_20260708_223000_full",
+        help="Path to a rollout JSONL file or a directory containing rollout JSONL files.",
+    )
+    parser.add_argument("--output-dir", default=None, help="Directory for generated reasoning chain files.")
+    parser.add_argument("--val-size", type=float, default=0.1, help="Validation fraction by sample key.")
+    parser.add_argument("--max-samples-per-file", type=int, default=10000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--log-to-wandb", action="store_true", help="Log a small HTML preview to W&B.")
+    parser.add_argument("--draw-points", action="store_true", help="Draw extracted reasoning points in the W&B preview.")
+    parser.add_argument(
+        "--allow-no-coordinate",
+        action="store_true",
+        help="Keep chains whose <think> block has no coordinate evidence.",
+    )
+    parser.add_argument(
+        "--data-root",
+        default=os.environ.get("DATA_ROOT", "data"),
+        help="Data root used to normalize image paths.",
+    )
+    return parser.parse_args()
 
-    system_prompt_spatial="A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant systematically reasons through the problem step by step by checking and verifying possible solutions and image regions, while grounding reasoning steps to specific objects and their relationships in the image using (x,y) coordinates. There may be one image or two images concatenated together, in which case the Assistant must compare the spatial relationships between the two images.\n\nAll reasoning processes must be enclosed within a single set of '<think>' tags, and reasoning steps must include specific reference coordinates:\n\nFor example, <think>\n{Reasoning text}. {Further reasoning text} {more reasoning} \n</think>\n\nThe final answer should be enclosed in '<answer>' tags in the format:\n<answer> {text of selected answer choice} </answer>\n\nThe Assistant must help the user identify the correct answer choice from the options provided.\n-Your answer should be the **exact text** of the selected answer option, without additional explanations or reasoning or the option text. For example, if the answer is A. right , your response should just be <answer>right</answer> (not <answer>A. right</answer>).\n-If the correct answer is unclear, select the most relevant option based on the spatial relationships and dynamics within the image.\n- The Assistant should verify each step and check multiple possible solutions before selecting the final answer."
 
-    system_prompt_web_action="""You are a helpful Assistant tasked with navigating a web browser. These tasks will be accomplished through the use of specific actions you can issue. Your task is to choose the action that makes the most progress towards an objective. You should systematically reason through the problem step by step by checking and verifying possible actions and webpage regions, while grounding reasoning steps to specific (x, y) points in the image:\nEach reasoning step must be enclosed within '<think>' tags and reference exactly one specific coordinate (x, y):\n<think>\n[Reasoning text with grounded points inline] (x_1, y_1). [Further reasoning] (x_2, y_2), ..., [Final reasoning] (x_n, y_n).\n</think>\nWhen ready to provide the final answer, enclose it within '<answer>' tags:\n<answer> {action} </answer>\n- Each reasoning step must explicitly describe and evaluate the region’s relevance to the objective and proposing an action.\n- Never repeat coordinates from previous steps.\n- Look at diverse webpage regions to figure out which action should be taken.\n- Verify your selection by examining multiple possible solutions.\n\n**Inputs**\nHere's the information you'll have:\n1. OBJECTIVE: This is the task you are trying to complete.\n2. The web page screenshot: This is a screenshot of the current webpage you are on, with each interactable element assigned a unique numerical id. Each bounding box and its respective id shares the same color.\n3. PREVIOUS ACTIONS: This is the actions that you have performed prior to getting to the current page, but instead of the button id, the button text of the actions taken on the previously navigated pages are provided.\n\n**Action Space**\nYou can take the following actions:\n1. ```click [id]```: This action clicks on an element with a specific id on the webpage.\n2. ```type [id] [content]```: Use this to type the content into the field with id. By default, typing the content simulates pressing the "Enter" key afterward to submit the text.\n3. ```scroll [down]```: Scroll the page down.\n4. ```go_back```: Navigate to the previously viewed page.\n5. ```stop [answer]```: Issue this action when you believe the task is complete. If the objective is to find a text-based answer, provide the answer in the bracket. If no answer is required, output empty brackets.\n\n**Guidelines**\nTo be successful, it is very important to follow the following rules:\n2. Generate the final action in the correct format. For example, '<answer> click [1234] </answer>'.\n3. Issue the stop action (i.e. stop [answer]) when you think you have achieved the objective. Don't generate anything after stop.\n4. In your final answer, you should only output a single action and should never output a prediction involving taking multiple actions."""
+def natural_sort_key(path: str):
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", path)]
 
-    system_prompt_qa="""You are an assistant answering a visual question by reasoning through image regions. You must systematically examine and verify relevant regions of the image, grounding each reasoning step to a specific (x, y) coordinate.
 
-All reasoning steps must be enclosed within '<think>' tags and each step must start with an absolute (x, y) coordinate, followed by a description and evaluation of the corresponding image region. 
-When confident in the answer, provide it inside '<answer>' tags:
-
-<think>\n[Reasoning text with grounded points inline] (x_1, y_1). [Further reasoning] (x_2, y_2), ..., [Final reasoning] (x_n, y_n).\n</think>\nWhen ready to provide the final answer, enclose it within '<answer>' tags:\n<answer> {final answer} </answer>
-
-Instructions:
-- Always begin a reasoning step with an (x, y) coordinate.
-- Coordinates must be absolute image points formatted as integers: (x, y).
-- Regions refer to spatially distinct parts of the image: quadrants (e.g., top-left), discrete objects (e.g., bottle), or structural zones (e.g., background).
-- Explore diverse, even less likely, regions early on to ensure broad coverage.
-- Reason about a region's relevance to the question and—if visible—its relation to prior steps.
-- Aim to choose accurate, representative coordinates within each region."""
-
-    if prompt_type == "web_grounding":
-        system_prompt = system_prompt_web_grounding
-    elif prompt_type == "spatial":
-        system_prompt = system_prompt_spatial
-    elif prompt_type == "web_action":
-        system_prompt = system_prompt_web_action
-    elif prompt_type == "vstar":
-        # NOTE: V* single turn not tested yet
-        system_prompt = system_prompt_qa
-    else:
-        raise ValueError(f"Invalid prompt type: {prompt_type}")
-
-    # What fraction or number of val samples do we want:
-    val_size = 0.05  # 10% for val, for example
-    draw_points = True
-    max_samples_per_file = 10000
-
-    # -----------------------------------------------------------------------
-
-    # 1) Gather all .jsonl files from data_str (if it's a folder)
+def discover_data_files(data_str: str) -> List[str]:
     if os.path.isdir(data_str):
         data_files = [os.path.join(data_str, f) for f in os.listdir(data_str) if f.endswith(".jsonl")]
     else:
         data_files = [data_str]
+    return sorted(data_files, key=natural_sort_key)
 
-    # We'll store:
-    # - all textual chains to write to a .txt file
-    # - for each chain, we create a separate SFT entry
+
+def iter_jsonl_rows(data_files: List[str]):
+    for data_file in data_files:
+        with open(data_file, "r", encoding="utf-8") as f:
+            for line_idx, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield data_file, line_idx, json.loads(line)
+                except json.JSONDecodeError as exc:
+                    yield data_file, line_idx, {"error": f"json_decode_error: {exc}"}
+
+
+def normalize_image_path(image_path: str, data_root: Optional[str] = None) -> str:
+    if not image_path:
+        return image_path
+
+    normalized = image_path.replace("\\", "/")
+    if "/mllm_hal/" in normalized:
+        return "mllm_hal/" + normalized.split("/mllm_hal/", 1)[1]
+
+    data_root = data_root or os.environ.get("DATA_ROOT") or "data"
+    try:
+        rel_path = os.path.relpath(normalized, data_root)
+        if not rel_path.startswith(".."):
+            return rel_path.replace("\\", "/")
+    except ValueError:
+        pass
+
+    if "/data/" in normalized:
+        return normalized.split("/data/", 1)[1]
+    return normalized
+
+
+def resolve_image_path(image_path: str, data_root: str) -> str:
+    if os.path.isabs(image_path) and os.path.exists(image_path):
+        return image_path
+    candidate = os.path.join(data_root, image_path)
+    if os.path.exists(candidate):
+        return candidate
+    if os.path.exists(image_path):
+        return image_path
+    return candidate
+
+
+def sample_key_for_row(data_file: str, line_idx: int, data_json: Dict[str, Any], data_root: str) -> str:
+    if data_json.get("id"):
+        return str(data_json["id"])
+    question = data_json.get("question", "")
+    image = normalize_image_path(data_json.get("image", ""), data_root)
+    if question or image:
+        return f"{image}\n{question}"
+    return f"{data_file}:{line_idx}"
+
+
+def write_json(path: str, data: Any) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def maybe_log_to_wandb(entries: List[Dict[str, Any]], data_root: str, draw_points: bool) -> None:
+    if wandb is None:
+        raise ImportError("wandb is required for --log-to-wandb but is not installed.")
+    if not entries:
+        print("No SFT entries available for W&B logging.")
+        return
+
+    wandb.init(project="vlm-search", name="amber_mcts_reasoning_chains_sft")
+    max_samples = 50
+    random_indices = random.sample(range(len(entries)), min(max_samples, len(entries)))
+    html_content = "<html><body>"
+
+    for idx in random_indices:
+        entry = entries[idx]
+        question = entry["messages"][1]["content"]
+        chain_text = entry["messages"][2]["content"]
+        image_path = entry["images"][0]
+        true_answer = entry["gt_answer"]
+        final_answer = ""
+        answer_match = ANSWER_RE.search(chain_text)
+        if answer_match:
+            final_answer = answer_match.group(1).strip()
+
+        img_html = ""
+        resolved_image_path = resolve_image_path(image_path, data_root)
+        if image_path and os.path.exists(resolved_image_path):
+            with Image.open(resolved_image_path) as pil_img:
+                if draw_points:
+                    draw = ImageDraw.Draw(pil_img)
+                    circle_radius = 7
+                    for x, y, point_num in extract_think_points(chain_text):
+                        draw.ellipse(
+                            (x - circle_radius, y - circle_radius, x + circle_radius, y + circle_radius),
+                            fill="green",
+                        )
+                        draw.text((x + 15, y), str(point_num), fill="green")
+
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+
+                buf = BytesIO()
+                pil_img.save(buf, format="PNG")
+                enc = base64.b64encode(buf.getvalue()).decode("utf-8")
+                img_html = f'<img src="data:image/png;base64,{enc}" style="max-width:600px;" />'
+
+        row_html = f"""
+        <div style="border:1px solid #ddd; padding:10px; margin:10px 0;">
+            <p><b>Question:</b> {html.escape(question)}</p>
+            {img_html}
+            <p><b>Prediction:</b> {html.escape(final_answer)} &nbsp; <b>GT:</b> {html.escape(true_answer)}</p>
+            <p><b>Chain:</b> {html.escape(chain_text)}</p>
+        </div>
+        """
+        html_content += row_html
+
+    html_content += "</body></html>"
+    wandb.log({"mcts_reasoning_chains": wandb.Html(html_content)})
+    wandb.finish()
+
+
+def main():
+    args = parse_args()
+    random.seed(args.seed)
+    require_coordinate = not args.allow_no_coordinate
+    data_files = discover_data_files(args.data_str)
+    rows = list(iter_jsonl_rows(data_files))
+
+    sample_keys = sorted(
+        {sample_key_for_row(data_file, line_idx, data_json, args.data_root) for data_file, line_idx, data_json in rows}
+    )
+    random.shuffle(sample_keys)
+    val_count = int(len(sample_keys) * args.val_size)
+    val_keys = set(sample_keys[:val_count])
+
     all_chains_text = []
     sft_entries_train = []
     sft_entries_val = []
     all_images_processed = set()
     chain_global_id = 0
     correct_count = 0
+    report = {
+        "data_str": args.data_str,
+        "data_files": len(data_files),
+        "rows_seen": len(rows),
+        "sample_keys": len(sample_keys),
+        "val_size": args.val_size,
+        "train_sample_keys": len(sample_keys) - len(val_keys),
+        "val_sample_keys": len(val_keys),
+        "counts": Counter(),
+        "filters": Counter(),
+        "per_file_rows": defaultdict(int),
+    }
 
-    # split data_files into two lists: train and val based on the val_size
-    train_files = data_files[:int(len(data_files) * (1 - val_size))]
-    val_files = data_files[int(len(data_files) * (1 - val_size)):]
-
-    for i, data_file in enumerate(data_files):
-        with open(data_file, "r", encoding="utf-8") as f:
-            line = f.readline().strip()
-            if not line:
-                continue
-            data_json = json.loads(line)
-
+    for row_idx, (data_file, line_idx, data_json) in enumerate(rows):
+        report["per_file_rows"][data_file] += 1
         error = data_json.get("error", "")
         if error:
-            print(f"error processing {data_file}: {error}")
+            report["counts"]["error_rows"] += 1
+            print(f"error processing {data_file}:{line_idx}: {error}")
             continue
 
         question = data_json.get("question", "")
-        image = data_json.get("image", "")
-        system_prompt_MCTS = data_json.get("system_prompt", "")
-        true_answer = data_json.get("true_answer", "")
-        # tree, etc...
-        chains, root_node_value = build_all_reasoning_for_sample(data_json)
+        image = normalize_image_path(data_json.get("image", ""), args.data_root)
+        system_prompt = normalize_system_prompt(data_json.get("system_prompt"))
+        true_answer = normalize_yes_no_answer(data_json.get("true_answer", ""))
+        if true_answer is None:
+            report["filters"]["invalid_true_answer"] += 1
+            continue
+
+        sample_key = sample_key_for_row(data_file, line_idx, data_json, args.data_root)
+        split = "val" if sample_key in val_keys else "train"
+        chains, root_node_value, sample_stats = build_all_reasoning_for_sample(
+            data_json,
+            require_coordinate=require_coordinate,
+        )
+        report["counts"].update(sample_stats)
         if root_node_value > 0:
             correct_count += 1
 
-        if len(chains) > max_samples_per_file:
-            chains = random.sample(chains, max_samples_per_file)
+        if len(chains) > args.max_samples_per_file:
+            report["counts"]["sampled_down_chains"] += len(chains) - args.max_samples_per_file
+            chains = random.sample(chains, args.max_samples_per_file)
 
-        # For each chain, we treat it as a separate SFT training example
-        for c in chains:
-            # We'll store in a text file
-            all_chains_text.append(c)
+        for chain in chains:
+            chain_text = chain["chain"]
+            final_answer = chain["final_answer"]
+            if final_answer != true_answer:
+                report["filters"]["final_answer_mismatches_true_answer"] += 1
+                continue
 
-            # check if more than 1 "<image>" in question
-            if c.count("<image>") > 0:
-                # remove all "<image>" tags
-                c = c.replace("<image>", "").replace("</image>", "")
-
-            # SFT-style record:
-            #   "messages": [
-            #       {"role": "system", "content": system_prompt},
-            #       {"role": "user",   "content": question},
-            #       {"role": "assistant", "content": c}
-            #   ]
-            #   "images": [image]
+            all_chains_text.append(chain_text)
             chain_entry = {
-                "id": f"{i}_{chain_global_id}",
-                "metadata": {},
+                "id": f"{row_idx}_{chain_global_id}",
+                "metadata": {
+                    "source_file": data_file,
+                    "source_line": line_idx,
+                    "sample_key": sample_key,
+                    "split": split,
+                    "rollout_idx": chain["rollout_idx"],
+                    "reward": chain["reward"],
+                    "root_node_value": root_node_value,
+                },
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": question
-                    },
-                    {
-                        "role": "assistant",
-                        "content": c
-                    }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": chain_text},
                 ],
                 "images": [image],
                 "gt_answer": true_answer,
             }
-            if data_file in train_files:
+            if split == "train":
                 sft_entries_train.append(chain_entry)
-                if image not in all_images_processed:
-                    all_images_processed.add(image)
             else:
                 sft_entries_val.append(chain_entry)
-                if image not in all_images_processed:
-                    all_images_processed.add(image)
+            all_images_processed.add(image)
             chain_global_id += 1
-        
-    total_samples = len(data_files)
+
+    total_samples = len(rows) - report["counts"]["error_rows"]
     if total_samples == 0:
         print("No samples found. Exiting.")
-        exit()
+        return
 
     accuracy = correct_count / total_samples
-    print(f"Processed {total_samples} input JSONL files.")
+    print(f"Processed {total_samples} input JSONL rows from {len(data_files)} files.")
     print(f"Root node correctness ratio: {accuracy:.3f} ({correct_count}/{total_samples})")
 
-    # 2) Write out all chains to a text file
-    base_dir = os.path.dirname(data_files[0]) if data_files else os.path.dirname(data_str)
-    out_dir = os.path.join(base_dir, "reasoning_chains")
+    base_dir = os.path.dirname(data_files[0]) if data_files else os.path.dirname(args.data_str)
+    out_dir = args.output_dir or os.path.join(base_dir, "reasoning_chains")
     os.makedirs(out_dir, exist_ok=True)
 
     txt_path = os.path.join(out_dir, "reasoning_chains.txt")
     with open(txt_path, "w", encoding="utf-8") as f:
         sep = "\n\n----------------------\n\n----------------------\n\n"
-        for ch in all_chains_text:
-            f.write(ch + sep)
+        for chain_text in all_chains_text:
+            f.write(chain_text + sep)
     print(f"Wrote {len(all_chains_text)} total chains to {txt_path}")
-
-    # 3) Train/Val split at the chain level has been done during processing
 
     train_json_path = os.path.join(out_dir, "reasoning_chains_train.json")
     val_json_path = os.path.join(out_dir, "reasoning_chains_val.json")
-
-    with open(train_json_path, "w", encoding="utf-8") as f:
-        json.dump(sft_entries_train, f, indent=2)
+    write_json(train_json_path, sft_entries_train)
     print(f"Saved train SFT data to: {train_json_path}  (count={len(sft_entries_train)})")
-
-    with open(val_json_path, "w", encoding="utf-8") as f:
-        json.dump(sft_entries_val, f, indent=2)
+    write_json(val_json_path, sft_entries_val)
     print(f"Saved val SFT data to: {val_json_path}  (count={len(sft_entries_val)})")
 
-    # 4) (Optional) Log to W&B
-    if log_to_wandb:
-        wandb.init(project="vlm-search", name="mcts_reasoning_chains_sft")
-        max_samples = 50
-        # Shuffle the data
-        sft_entries = sft_entries_train + sft_entries_val
-        random_indices = random.sample(range(len(sft_entries)), min(max_samples, len(sft_entries)))
-        html_content = "<html><body>"
-        for idx in random_indices:
-            entry = sft_entries[idx]
-            question = entry["messages"][1]["content"]
-            chain_text = entry["messages"][2]["content"]
-            image_path = entry["images"][0]
-            true_answer = entry["gt_answer"]
-            # Extract final answer from <answer> tags, if present
-            final_answer = ""
-            if "<answer>" in chain_text and "</answer>" in chain_text:
-                try:
-                    final_answer = chain_text.split("<answer>")[1].split("</answer>")[0].strip()
-                except:
-                    pass
+    report["counts"]["train_entries"] = len(sft_entries_train)
+    report["counts"]["val_entries"] = len(sft_entries_val)
+    report["counts"]["unique_images"] = len(all_images_processed)
+    report["counts"] = dict(report["counts"])
+    report["filters"] = dict(report["filters"])
+    report["per_file_rows"] = dict(report["per_file_rows"])
+    report_path = os.path.join(out_dir, "linearization_report.json")
+    write_json(report_path, report)
+    print(f"Saved linearization report to: {report_path}")
 
-            img_html = ""
-            if image_path and os.path.exists(image_path):
-                with Image.open(image_path) as pil_img:
-                    if draw_points:
-                        # Prepare to draw on the image
-                        draw = ImageDraw.Draw(pil_img)
-                        circle_radius = 7
+    if args.log_to_wandb:
+        maybe_log_to_wandb(sft_entries_train + sft_entries_val, args.data_root, args.draw_points)
 
-                        # 1) Draw intermediate points from <think> text
-                        intermediate_points = extract_think_points(chain_text)
-                        for (x, y, point_num) in intermediate_points:
-                            draw.ellipse(
-                                (x - circle_radius, y - circle_radius,
-                                 x + circle_radius, y + circle_radius),
-                                fill="green",
-                            )
-                            draw.text((x + 15, y), str(point_num), fill="green")
 
-                        # 2) If final answer parse is valid, draw it in red
-                        try:
-                            pred_ans = ast.literal_eval(final_answer)
-                            if (
-                                isinstance(pred_ans, (list, tuple)) and
-                                len(pred_ans) == 2
-                            ):
-                                px, py = float(pred_ans[0]), float(pred_ans[1])
-                                draw.ellipse(
-                                    (px - circle_radius, py - circle_radius,
-                                     px + circle_radius, py + circle_radius),
-                                    fill="red",
-                                )
-                                draw.text((px + 15, py), "PRED", fill="red")
-                        except:
-                            pass
-
-                        # 3) If ground truth is provided, draw it in blue
-                        try:
-                            gt_ans = ast.literal_eval(true_answer)
-                            if (
-                                isinstance(gt_ans, (list, tuple)) and
-                                len(gt_ans) == 2
-                            ):
-                                gx, gy = float(gt_ans[0]), float(gt_ans[1])
-                                draw.ellipse(
-                                    (gx - circle_radius, gy - circle_radius,
-                                     gx + circle_radius, gy + circle_radius),
-                                    fill="blue",
-                                )
-                                draw.text((gx + 15, gy), "GT", fill="blue")
-                        except:
-                            pass
-
-                    # Convert to RGB for displaying
-                    if pil_img.mode != "RGB":
-                        pil_img = pil_img.convert("RGB")
-
-                    buf = BytesIO()
-                    pil_img.save(buf, format="PNG")
-                    enc = base64.b64encode(buf.getvalue()).decode("utf-8")
-                    img_html = f'<img src="data:image/png;base64,{enc}" style="max-width:600px;" />'
-                # except Exception as e:
-                #     print(f"Could not open {image_path}: {e}")
-
-            row_html = f"""
-            <div style="border:1px solid #ddd; padding:10px; margin:10px 0;">
-                <p><b>Question:</b> {question}</p>
-                {img_html}
-                <p><b>Chain:</b> {chain_text.replace('<','&lt;').replace('>','&gt;')}</p>
-            </div>
-            """
-            html_content += row_html
-
-        html_content += "</body></html>"
-        wandb.log({"mcts_reasoning_chains": wandb.Html(html_content)})
-        wandb.finish()
+if __name__ == "__main__":
+    main()
