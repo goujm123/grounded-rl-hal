@@ -7,9 +7,7 @@ __pycache__/
 *.log
 *.out
 
-# JSON and compressed variants
-*.json
-*.jsonl
+# JSON compressed variants
 *.jsonl.gz
 *.jsonl.gz.part
 *.jsonl.gz.part.1
@@ -26,6 +24,7 @@ checkpoints/
 
 # Other files
 amber_original/
+models/
 reports/
 vllm_logs/
 temp/

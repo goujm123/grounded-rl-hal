@@ -20,7 +20,7 @@ TEMPLATE="qwen2_vl"
 echo "TEMPLATE: ${TEMPLATE}"
 
 MODEL="Qwen/Qwen2.5-VL-7B-Instruct"
-MODEL="Qwen/Qwen2.5-VL-3B-Instruct"
+# MODEL="Qwen/Qwen2.5-VL-3B-Instruct"
 
 # tags
 TAG="${TAG_MODEL}_full_sft_${DATASET}"
