@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import importlib.util
+import math
+import numbers
 import os
 import sys
 from collections import defaultdict
 from functools import partial
-from typing import Callable, Dict, List, Optional, Tuple, TypedDict
+from typing import Callable, Dict, List, Mapping, Tuple
 
 import torch
 from transformers import PreTrainedTokenizer
@@ -26,13 +28,23 @@ from ...protocol import DataProto
 from .config import RewardConfig
 
 
-class RewardScore(TypedDict):
-    overall: float
-    format: Optional[float]
-    accuracy: Optional[float]
-
-
+RewardScore = Dict[str, float]
 RewardFunction = Callable[[str, str], RewardScore]
+
+
+def validate_reward_score(score: Mapping[str, float]) -> RewardScore:
+    if not isinstance(score, Mapping) or "overall" not in score:
+        raise ValueError("Reward function must return a mapping containing `overall`.")
+
+    validated_score = {}
+    for key, value in score.items():
+        if not isinstance(key, str) or not isinstance(value, numbers.Real):
+            raise TypeError(f"Reward metric {key!r} must be a real number, got {value!r}.")
+        numeric_value = float(value)
+        if not math.isfinite(numeric_value):
+            raise ValueError(f"Reward metric {key!r} must be finite, got {value!r}.")
+        validated_score[key] = numeric_value
+    return validated_score
 
 
 class FunctionRewardManager:
@@ -80,13 +92,16 @@ class FunctionRewardManager:
             )
             ground_truth = data_item.non_tensor_batch["ground_truth"]
 
-            score = self.reward_fn(response_str, ground_truth)
+            score = validate_reward_score(self.reward_fn(response_str, ground_truth))
+            if valid_response_length == 0:
+                score["overall"] = 0.0
 
             if i < print_first_n:
                 print(f"response_str: {response_str}; score: {score}")
             
             # print(f"response_str: {response_str}; valid_response_length: {valid_response_length}; score: {score}")
-            reward_tensor[i, valid_response_length - 1] = score["overall"]
+            if valid_response_length > 0:
+                reward_tensor[i, valid_response_length - 1] = score["overall"]
             for key, value in score.items():
                 reward_metrics[key].append(value)
 

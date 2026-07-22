@@ -94,6 +94,7 @@ class Runner:
         except Exception as e:
             import traceback
             traceback.print_exc()
+            raise
 
 def main():
     cli_args = OmegaConf.from_cli()

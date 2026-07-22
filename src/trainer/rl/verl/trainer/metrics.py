@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, List
+from collections import defaultdict
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
@@ -22,6 +23,104 @@ from ..protocol import DataProto
 
 def reduce_metrics(metrics: Dict[str, List[Any]]) -> Dict[str, Any]:
     return {key: np.mean(value) for key, value in metrics.items()}
+
+
+def compute_group_reward_metrics(
+    uids: Sequence[Any],
+    overall_scores: Sequence[float],
+    accuracy_scores: Optional[Sequence[float]] = None,
+    zero_tolerance: float = 1e-12,
+) -> Dict[str, float]:
+    if len(uids) != len(overall_scores):
+        raise ValueError("uids and overall_scores must have the same length.")
+    if accuracy_scores is not None and len(uids) != len(accuracy_scores):
+        raise ValueError("uids and accuracy_scores must have the same length.")
+
+    grouped_overall = defaultdict(list)
+    grouped_accuracy = defaultdict(list)
+    for index, uid in enumerate(uids):
+        grouped_overall[str(uid)].append(float(overall_scores[index]))
+        if accuracy_scores is not None:
+            grouped_accuracy[str(uid)].append(float(accuracy_scores[index]))
+
+    if any(len(scores) < 2 for scores in grouped_overall.values()):
+        raise ValueError("GRPO reward groups must contain at least two rollouts.")
+
+    def summarize(groups: Mapping[str, Sequence[float]], prefix: str) -> Dict[str, float]:
+        standard_deviations = np.array(
+            [np.std(scores, ddof=1) for scores in groups.values()], dtype=np.float64
+        )
+        return {
+            f"grpo/{prefix}_group_std_mean": float(np.mean(standard_deviations)),
+            f"grpo/{prefix}_zero_variance_fraction": float(
+                np.mean(np.isclose(standard_deviations, 0.0, atol=zero_tolerance))
+            ),
+        }
+
+    metrics = summarize(grouped_overall, "reward")
+    if grouped_accuracy:
+        metrics.update(summarize(grouped_accuracy, "accuracy"))
+    return metrics
+
+
+def compute_amber_validation_metrics(
+    reward_metrics: Mapping[str, Sequence[float]],
+    categories: Sequence[Any],
+    amber_types: Sequence[Any],
+) -> Dict[str, float]:
+    required_metrics = {"accuracy", "answer_valid", "predicted_no", "label_no", "correct_no"}
+    if not required_metrics.issubset(reward_metrics):
+        return {}
+
+    accuracy = np.asarray(reward_metrics["accuracy"], dtype=np.float64)
+    answer_valid = np.asarray(reward_metrics["answer_valid"], dtype=np.float64)
+    predicted_no = np.asarray(reward_metrics["predicted_no"], dtype=np.float64)
+    label_no = np.asarray(reward_metrics["label_no"], dtype=np.float64)
+    correct_no = np.asarray(reward_metrics["correct_no"], dtype=np.float64)
+    expected_length = len(accuracy)
+    lengths = {
+        expected_length,
+        len(answer_valid),
+        len(predicted_no),
+        len(label_no),
+        len(correct_no),
+        len(categories),
+        len(amber_types),
+    }
+    if len(lengths) != 1:
+        raise ValueError("AMBER reward diagnostics and metadata must have matching lengths.")
+    if expected_length == 0:
+        return {}
+
+    predicted_no_count = float(np.sum(predicted_no))
+    label_no_count = float(np.sum(label_no))
+    correct_no_count = float(np.sum(correct_no))
+    no_precision = correct_no_count / predicted_no_count if predicted_no_count else 0.0
+    no_recall = correct_no_count / label_no_count if label_no_count else 0.0
+    no_f1 = (
+        2.0 * no_precision * no_recall / (no_precision + no_recall)
+        if no_precision + no_recall
+        else 0.0
+    )
+
+    metrics = {
+        "amber/accuracy": float(np.mean(accuracy)),
+        "amber/invalid_answer_rate": float(1.0 - np.mean(answer_valid)),
+        "amber/no_precision": no_precision,
+        "amber/no_recall": no_recall,
+        "amber/no_f1": no_f1,
+    }
+
+    def add_grouped_accuracy(values: Sequence[Any], metric_prefix: str) -> None:
+        grouped_indices = defaultdict(list)
+        for index, value in enumerate(values):
+            grouped_indices[str(value)].append(index)
+        for value, indices in sorted(grouped_indices.items()):
+            metrics[f"amber/{metric_prefix}_accuracy/{value}"] = float(np.mean(accuracy[indices]))
+
+    add_grouped_accuracy(categories, "category")
+    add_grouped_accuracy(amber_types, "type")
+    return metrics
 
 
 def compute_data_metrics(batch: DataProto, use_critic: bool = False) -> Dict[str, Any]:

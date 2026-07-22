@@ -46,7 +46,14 @@ from ..workers.rollout.multiturn.rollout_multiturn import RolloutMultiturn
 from ..workers.reward import FunctionRewardManager
 from . import core_algos
 from .config import PPOConfig
-from .metrics import compute_data_metrics, compute_throughout_metrics, compute_timing_metrics, reduce_metrics
+from .metrics import (
+    compute_amber_validation_metrics,
+    compute_data_metrics,
+    compute_group_reward_metrics,
+    compute_throughout_metrics,
+    compute_timing_metrics,
+    reduce_metrics,
+)
 
 
 class Role(IntEnum):
@@ -163,6 +170,10 @@ def compute_advantage(data: DataProto, adv_estimator: AdvantageEstimator, gamma:
     return data
 
 
+def is_training_complete(global_step: int, training_steps: int) -> bool:
+    return global_step >= training_steps
+
+
 class RayPPOTrainer:
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
@@ -277,6 +288,7 @@ class RayPPOTrainer:
         reward_tensor_lst = []
         # Lists to collect samples for the table
         sample_inputs, sample_outputs, sample_labels, sample_scores = [], [], [], []
+        sample_categories, sample_amber_types = [], []
         reward_metrics_lst = defaultdict(list)
         for batch_dict in self.val_dataloader:
             test_batch = DataProto.from_single_dict(batch_dict)
@@ -309,6 +321,10 @@ class RayPPOTrainer:
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
             sample_outputs.extend(output_texts)
             sample_labels.extend(test_batch.non_tensor_batch["ground_truth"].tolist())
+            if "category" in test_batch.non_tensor_batch:
+                sample_categories.extend(test_batch.non_tensor_batch["category"].tolist())
+            if "amber_type" in test_batch.non_tensor_batch:
+                sample_amber_types.extend(test_batch.non_tensor_batch["amber_type"].tolist())
             test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
@@ -326,7 +342,11 @@ class RayPPOTrainer:
         self._maybe_log_val_generations(sample_inputs, sample_outputs, sample_labels, sample_scores)
         reward_score = torch.cat(reward_tensor_lst, dim=0).sum(-1).mean().item()
         val_reward_metrics = {f"val/{key}_reward": value for key, value in reduce_metrics(reward_metrics_lst).items()}
-        return {"val/reward_score": reward_score, **val_reward_metrics}
+        amber_metrics = compute_amber_validation_metrics(
+            reward_metrics_lst, sample_categories, sample_amber_types
+        )
+        amber_metrics = {f"val/{key}": value for key, value in amber_metrics.items()}
+        return {"val/reward_score": reward_score, **val_reward_metrics, **amber_metrics}
 
     def init_workers(self) -> None:
         """Init resource pool and worker group"""
@@ -514,9 +534,9 @@ class RayPPOTrainer:
 
         for _ in tqdm(range(self.config.trainer.total_episodes), desc="Episode", position=0):
             for batch_dict in tqdm(self.train_dataloader, desc="Running step", position=1):
-                self.global_step += 1
-                if self.global_step > self.training_steps:
+                if is_training_complete(self.global_step, self.training_steps):
                     break
+                self.global_step += 1
 
                 metrics, timing_raw = {}, {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
@@ -602,9 +622,19 @@ class RayPPOTrainer:
                         # get token level scores
                         reward_tensor, reward_metrics = ray.get(reward_ref)
                         batch.batch["token_level_scores"] = reward_tensor
-                        reward_metrics = {f"reward/{k}": v for k, v in reduce_metrics(reward_metrics).items()}
-                        print(f"reward metrics: {reward_metrics}")
-                        metrics.update(reward_metrics)
+                        if self.config.algorithm.adv_estimator == AdvantageEstimator.GRPO:
+                            metrics.update(
+                                compute_group_reward_metrics(
+                                    batch.non_tensor_batch["uid"],
+                                    reward_metrics["overall"],
+                                    reward_metrics.get("accuracy"),
+                                )
+                            )
+                        reduced_reward_metrics = {
+                            f"reward/{key}": value for key, value in reduce_metrics(reward_metrics).items()
+                        }
+                        print(f"reward metrics: {reduced_reward_metrics}")
+                        metrics.update(reduced_reward_metrics)
 
                         # apply kl penalty if available
                         if not self.config.algorithm.use_kl_loss and self.use_reference_policy:
@@ -681,8 +711,11 @@ class RayPPOTrainer:
 
                 self.logger.log(data=metrics, step=self.global_step)
 
+            if is_training_complete(self.global_step, self.training_steps):
+                break
+
         # perform validation after training
-        if self.val_reward_fn is not None:
+        if self.val_reward_fn is not None and self.config.trainer.val_after_train:
             if (
                 val_metrics is None
                 or self.config.trainer.val_freq <= 0
@@ -693,5 +726,7 @@ class RayPPOTrainer:
 
             print(f"Final validation metrics: {convert_dict_to_str(val_metrics)}")
 
-        if self.config.trainer.save_freq <= 0 or self.global_step % self.config.trainer.save_freq != 0:
+        if self.config.trainer.save_after_train and (
+            self.config.trainer.save_freq <= 0 or self.global_step % self.config.trainer.save_freq != 0
+        ):
             self._save_checkpoint()

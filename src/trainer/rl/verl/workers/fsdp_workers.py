@@ -228,8 +228,18 @@ class FSDPWorker(Worker):
         if model_config.freeze_vision_tower:
             if hasattr(model, "visual"):
                 model.visual.requires_grad_(False)
+                trainable_visual_parameters = [
+                    name for name, parameter in model.visual.named_parameters() if parameter.requires_grad
+                ]
+                if trainable_visual_parameters:
+                    raise RuntimeError(
+                        f"Visual parameters remain trainable after freezing: {trainable_visual_parameters[:10]}"
+                    )
                 fsdp_config.use_orig_params = True
-                self.print_rank0("Vision tower is set to not trainable.")
+                self.print_rank0(
+                    "Vision tower and visual merger are set to not trainable "
+                    f"({sum(1 for _ in model.visual.parameters())} parameter tensors)."
+                )
             else:
                 self.print_rank0("No vision tower found.")
 

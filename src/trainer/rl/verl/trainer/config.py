@@ -86,9 +86,11 @@ class TrainerConfig:
     critic_warmup: int = 0
     val_freq: int = -1
     val_before_train: bool = True
+    val_after_train: bool = True
     val_only: bool = False
     val_generations_to_log: int = 0
     save_freq: int = -1
+    save_after_train: bool = True
     save_limit: int = -1
     save_checkpoint_path: Optional[str] = None
     load_checkpoint_path: Optional[str] = None
