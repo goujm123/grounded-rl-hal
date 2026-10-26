@@ -4,10 +4,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)    # get the directory 
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of the repository (default: grounded-rl-hal)
 
 # Set important environment variables
-NUM_GPUS=${NUM_GPUS:-4} # set this to >=4 for 72b models, 1-2 for 3b,7b models
-NUM_PROCESSES=${NUM_PROCESSES:-10}
+NUM_GPUS=${NUM_GPUS:-2} # set this to >=4 for 72b models, 1-2 for 3b,7b models
+NUM_PROCESSES=${NUM_PROCESSES:-4}
 dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3} # set this to the GPUs you want to use
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1} # set this to the GPUs you want to use
 export CUDA_VISIBLE_DEVICES
 
 # MCTS-related parameters
@@ -114,7 +114,7 @@ Rules:
 """
 
   DATA_FILE="$DATA_ROOT/mllm_hal/amber_discriminative_MCTS.jsonl"
-  SAVE_TAG="MCTS_AMBER_DISCRIMINATIVE_72b"
+  SAVE_TAG="MCTS_AMBER_DISCRIMINATIVE_7b"
   JUDGE="string_match"
 
 # TODO: Add a system prompt and judge for amber_generative dataset
@@ -127,7 +127,7 @@ elif [ "$dataset" == "amber_generative" ]; then
 fi
 
 IMAGE_ROOT=$DATA_ROOT
-MODEL="${MODEL:-Qwen/Qwen2.5-VL-72B-Instruct}"
+MODEL="${MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}"
 
 ACTOR_MODEL="qwen_vllm"
 

@@ -19,6 +19,7 @@ slurm/
 
 # Data and checkpoints
 data/
+data_imported/
 checkpoints/
 *.safetensors
 
