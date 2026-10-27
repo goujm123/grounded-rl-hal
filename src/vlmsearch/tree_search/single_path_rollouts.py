@@ -330,7 +330,7 @@ class SinglePathRollouts:
                     input_query=input_query,
                     image=input_image,
                     gt_ans=true_answer,
-                    pred_ans=final_answer,
+                    pred_ans=(getattr(leaf_node, "raw_final_answer", final_answer) if self.judge.judge_type == "string_match" else final_answer),
                     scale_factor=scale_factor,
                 )
                 logger.debug(f"Judge score: {judge_score}; Pred answer: {final_answer}; True answer: {true_answer}")
@@ -477,6 +477,7 @@ class SinglePathRollouts:
                 final_answer_text = final_answer_text.split(self.final_token_end)[0].strip()
                 leaf_node = TreeNode(thought_text=final_answer_text, parent=current_node)
                 leaf_node.is_terminal = True
+                leaf_node.raw_final_answer = all_text if self.generate_upfront else next_text
                 current_node.add_child(leaf_node)
                 path.append(leaf_node)
                 break
@@ -638,6 +639,7 @@ class SinglePathRollouts:
             "true_answer": true_answer,
             "thoughts": thoughts,
             "final_answer": final_answer,
+            "raw_final_answer": getattr(path_nodes[-1], "raw_final_answer", final_answer),
             "system_prompt": system_prompt,
             "judge_score": judge_score,
             "scale_factor": scale_factor,

@@ -19,6 +19,8 @@ slurm/
 
 # Data and checkpoints
 data/
+!scripts/data/
+!scripts/data/*.py
 data_imported/
 checkpoints/
 *.safetensors

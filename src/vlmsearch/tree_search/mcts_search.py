@@ -19,6 +19,7 @@ def serialize_tree(root: TreeNode) -> None:
     def _node_to_dict(node: TreeNode) -> dict:
         return {
             "thought_text": node.thought_text,
+            "raw_final_answer": node.raw_final_answer,
             "is_terminal": node.is_terminal,
             "value": node.value,
             "visit_count": node.visit_count,
@@ -42,6 +43,7 @@ def deserialize_tree(filename: str) -> TreeNode:
             parent=parent
         )
         node.is_terminal = d["is_terminal"]
+        node.raw_final_answer = d.get("raw_final_answer")
         node.value = d["value"]
         node.visit_count = d["visit_count"]
         node.rollouts = d["rollouts"]
@@ -75,6 +77,7 @@ class TreeNode:
         used_coords: Optional[set] = None,
     ):
         self.thought_text = thought_text
+        self.raw_final_answer = None
         self.image = image
         self.parent = parent
         self.children: List[TreeNode] = []
@@ -363,6 +366,7 @@ class MonteCarloTreeSearch:
                 final_answer_text = re.sub(r'^[A-Z]\. ', '', final_answer_text)
                 child_node = TreeNode(thought_text=final_answer_text, parent=node)
                 child_node.is_terminal = True
+                child_node.raw_final_answer = next_text
             else:
                 # Normal child node
                 child_node = TreeNode(
@@ -413,12 +417,13 @@ class MonteCarloTreeSearch:
             final_answer = current_text
             final_answer = re.sub(r'^[A-Z]\. ', '', final_answer)
             reward = self._judge_rollout(
-                input_query, input_image, true_answer, final_answer
+                input_query, input_image, true_answer, final_answer, start_node.raw_final_answer
             )
             logger.debug(f"ROLLOUT: final answer => {final_answer}")
             logger.debug(f"ROLLOUT: reward => {reward}")
             rollout = {
                 "final_answer": final_answer,
+                "raw_final_answer": start_node.raw_final_answer,
                 "reward": reward,
                 "ephemeral_texts": [t for (t, _) in previous_thoughts],
                 "ephemeral_depth": self._get_depth(start_node),
@@ -473,13 +478,14 @@ class MonteCarloTreeSearch:
                 final_answer = re.sub(r'^[A-Z]\. ', '', final_answer)
                 
                 reward = self._judge_rollout(
-                    input_query, input_image, true_answer, final_answer
+                    input_query, input_image, true_answer, final_answer, next_text
                 )
                 
                 logger.debug(f"ROLLOUT: final answer => {final_answer}")
                 logger.debug(f"ROLLOUT: reward => {reward}")
                 rollout = {
                     "final_answer": final_answer,
+                    "raw_final_answer": next_text,
                     "reward": reward,
                     "ephemeral_texts": ephemeral_texts,
                     "ephemeral_depth": ephemeral_depth,
@@ -499,6 +505,7 @@ class MonteCarloTreeSearch:
         logger.debug(f"ROLLOUT: reward => {reward}")
         rollout = {
             "final_answer": final_answer,
+            "raw_final_answer": final_answer,
             "reward": reward,
             "ephemeral_texts": ephemeral_texts,
             "ephemeral_depth": ephemeral_depth,
@@ -520,7 +527,7 @@ class MonteCarloTreeSearch:
             node.increment_visits()
             node.update_value_mcts(reward)
 
-    def _judge_rollout(self, input_query, input_image, true_answer, final_answer):
+    def _judge_rollout(self, input_query, input_image, true_answer, final_answer, raw_final_answer=None):
         """
         For the rollout, only the final answer is judged. We get a single numerical reward.
         """
@@ -528,7 +535,7 @@ class MonteCarloTreeSearch:
             input_query=input_query,
             image=input_image,
             gt_ans=true_answer,
-            pred_ans=final_answer
+            pred_ans=(raw_final_answer if raw_final_answer is not None and self.judge.judge_type == "string_match" else final_answer)
         )
         return score
 
@@ -537,6 +544,8 @@ class MonteCarloTreeSearch:
         If we ever land on a node that is terminal but unvisited, we do a final judge.
         """
         final_ans = node.thought_text
+        if node.raw_final_answer is not None and self.judge.judge_type == "string_match":
+            final_ans = node.raw_final_answer
         score = self.judge.judge(
             input_query=input_query,
             image=input_image,

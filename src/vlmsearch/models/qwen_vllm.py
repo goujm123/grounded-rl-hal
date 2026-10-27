@@ -12,10 +12,11 @@ import logging
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger(__name__).setLevel(logging.WARNING)
 TIMEOUT = float(os.getenv("QWEN_VLLM_TIMEOUT", "360"))
-BASE_URL = f"http://localhost:{os.getenv('PORT', '9011')}/v1"
+BASE_URL = os.getenv("QWEN_VLLM_BASE_URL", f"http://localhost:{os.getenv('PORT', '9011')}/v1")
+SERVED_MODEL_NAME = os.getenv("QWEN_VLLM_MODEL", "qwen_vllm")
 
 client = OpenAI(
-    api_key="qwen",
+    api_key=os.getenv("QWEN_VLLM_API_KEY", "qwen"),
     base_url=BASE_URL,
     timeout=TIMEOUT,
     max_retries=0,
@@ -54,6 +55,7 @@ class Qwen_VLLM():
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.top_k = kwargs.get("top_k", -1)
         self.thought_token_begin = thought_token_begin
         self.thought_token_end = thought_token_end
         self.final_token_begin = final_token_begin
@@ -212,13 +214,16 @@ class Qwen_VLLM():
                     text_str = text_str.replace(f"{self.thought_token_begin}", "")
                     text_str = text_str.replace(f"{self.thought_token_end}", "")
                     text_str = text_str.strip()
-                    messages[-1]['content'][-1]['text'] += f"\n\nPrevious thought {thought_idx}: {text_str}"
+                    label = "Previous evidence" if self.thought_token_begin == "<evidence>" else "Previous thought"
+                    messages[-1]['content'][-1]['text'] += f"\n\n{label} {thought_idx}: {text_str}"
         
         # If user wants to force a <final> token, we append it
         add_answer_begin = False
         if force_final:
-            if self.multicrop:
-                messages.append({"role": "assistant", "content": [{"type": "text", "text": f"<think> Based on all the information I've gathered, I'll now provide my final answer. </think>\n<answer>"}]})
+            if self.multicrop or self.thought_token_begin == "<evidence>":
+                prefix = (self.final_token_begin if self.thought_token_begin == "<evidence>"
+                          else f"<think> Based on all the information I've gathered, I'll now provide my final answer. </think>\n{self.final_token_begin}")
+                messages.append({"role": "assistant", "content": [{"type": "text", "text": prefix}]})
                 continue_final_message = True
                 add_generation_prompt = False
                 add_answer_begin = True
@@ -238,15 +243,23 @@ class Qwen_VLLM():
 
         try:
             completion = client.chat.completions.create(
-                model="qwen_vllm",
+                model=SERVED_MODEL_NAME,
                 messages=messages,
                 max_tokens=self.max_new_tokens,
                 temperature=temperature,
                 top_p=self.top_p,
+                # Keep one visible evidence step per MCTS expansion even when
+                # the teacher would continue directly into its final answer.
+                stop=([self.final_token_end] if force_final and self.thought_token_begin == "<evidence>"
+                      else [self.thought_token_end, self.final_token_end]
+                      if self.thought_token_begin == "<evidence>" else None),
                 extra_body={
+                    "include_stop_str_in_output": self.thought_token_begin == "<evidence>",
                     "continue_final_message": continue_final_message,
                     "add_generation_prompt": add_generation_prompt,
-                    "repetition_penalty": self.repetition_penalty
+                    "repetition_penalty": self.repetition_penalty,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "top_k": self.top_k,
                     }
             )
         except OpenAIError as exc:

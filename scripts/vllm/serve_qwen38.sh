@@ -48,7 +48,7 @@ printf 'Serving %s on http://%s:%s/v1 using GPUs %s (TP=%s)\n' \
 
 # Qwen3.8's image processor expresses pixel-area limits through size, rather
 # than the max_pixels/min_pixels kwargs used by the older Qwen2.5 launcher.
-# No reasoning parser: MCTS needs literal <think>/<answer> tags in content.
+# No reasoning parser: retain the visible evidence and final-answer blocks.
 exec "$SERVE_ENV/bin/vllm" serve "$MODEL_PATH" \
     --host "$HOST" \
     --port "$PORT" \

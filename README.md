@@ -118,8 +118,9 @@ python scripts/setup/smoke_teacher.py --legacy-client
 The launcher selects the teacher environment automatically, uses GPU 0 in BF16,
 and serves `qwen_vllm` at `http://127.0.0.1:9011/v1` with API key `qwen`.
 It defaults to 32,768 context tokens, eight concurrent sequences, and native
-thinking disabled, preserving the MCTS client's literal `<think>`/`<answer>`
-output. Stop the server with Ctrl-C before using both GPUs for training.
+thinking disabled. The production rollout launcher uses literal
+`<evidence>`/`<answer>` blocks. Stop the server with Ctrl-C before using both GPUs
+for training.
 
 To distribute the teacher across both GPUs:
 
@@ -159,6 +160,102 @@ Datasets include:
 * Spatial reasoning tasks (SAT-2, BLINK)
 * Visual search tasks (V\*Bench)
 * Web grounding and action tasks (OS-ATLAS, ScreenSpot, VisualWebArena)
+
+### AMBER, POPE, and LongHalQA
+
+The hallucination collection is stored under `data/hallucination/`. Its downloader
+preserves official annotations, pins GitHub/Hugging Face revisions, records file
+hashes, and fully decodes each image. It downloads only the 500 images referenced
+by original COCO POPE, rather than the entire COCO image archive.
+
+```bash
+uv run --no-project --with requests --with gdown --with huggingface_hub \
+  --with pyarrow --with Pillow scripts/data/download_hallucination_data.py --data-root data
+conda activate grounded-rl
+python scripts/data/prepare_hallucination_splits.py --data-root data --inspect-only
+python scripts/data/prepare_hallucination_splits.py --data-root data
+python scripts/data/prepare_hallucination_splits.py --data-root data --audit
+```
+
+The prepared collection freezes AMBER at approximately 80/10/10 by image cluster;
+all POPE and LongHalQA variants remain test data. Identity grouping uses canonical
+source IDs, file hashes, decoded RGB hashes, and conservative perceptual matching.
+Perceptual candidates have contact sheets for inspection. A changed source,
+policy, or image requires a new output directory; an existing manifest cannot be
+silently replaced. Large crops or edits can evade perceptual matching, so the
+audit records the matching criteria and their limits.
+
+| Dataset | Train records | Dev records | Test records |
+| --- | ---: | ---: | ---: |
+| AMBER discriminative | 11,282 | 1,447 | 1,487 |
+| Original COCO POPE, three settings | 0 | 0 | 9,000 |
+| LongHalQA, seven tasks | 0 | 0 | 9,461 |
+
+Important local files:
+
+* `data/hallucination/raw/download-manifest.json`: source revisions, files, and checksums.
+* `data/hallucination/prepared/manifest.json`: the shared sample/image/cluster assignments.
+* `data/hallucination/prepared/amber/{train,dev,test}.mcts.jsonl`: binary rollout inputs.
+* `data/hallucination/prepared/amber/{train,dev,test}.rl.jsonl`: GRPO inputs with the same assignments.
+* `data/hallucination/prepared/evaluation/`: full POPE and LongHalQA inputs, including task-specific files and A–D choices.
+* `data/hallucination/prepared/{report,audit}.json`: counts and independent image/export verification.
+
+The downloaded LongHalQA release contains 25 identical image/question groups
+with conflicting labels, involving 51 records. Official labels and all 9,461
+evaluation records are preserved. `label-conflicts.json` records the affected
+groups; `evaluation/longhalqa.unambiguous.jsonl` excludes those records for a
+separate 9,410-record sensitivity analysis. Do not describe that filtered result
+as the original benchmark score. LongHalQA's `answer` field is authoritative;
+its constant `category="hallucination"` is not a binary label.
+
+To generate Qwen3.8 training rollouts, start with a bounded pilot:
+
+```bash
+bash scripts/mcts/run_mcts_qwen38.sh --dry-run
+bash scripts/mcts/run_mcts_qwen38.sh --max-samples 500
+```
+
+The launcher validates input labels, image checksums, and the frozen manifest
+before starting inference. It uses the isolated teacher environment, verifies
+the endpoint's model identity, disables native thinking, and requests one visible
+evidence step or final answer at a time. It reuses a matching running server;
+otherwise it starts one and stops only the processes it owns when finished.
+Failures propagate a nonzero status. Development/test rollouts require an
+explicit `--split dev|test --allow-held-out` and retain their evaluation assignment.
+The old `run_mcts_qwen72b.sh` name delegates AMBER runs to this launcher.
+
+The teacher uses literal `<evidence>` blocks for visible observations, keeping
+them separate from Qwen's native thinking delimiter. SFT conversion turns those
+observations into the student's established `<think>` format. Stop strings keep
+each API response to one complete evidence or answer block.
+
+New rollout records preserve their split, image cluster, manifest hash, and raw
+final response. The deterministic scorer requires one unambiguous answer and
+compares the complete binary/choice label, rejecting substring matches such as
+`unknown` for `no`, duplicate answers, and malformed output. It does not verify
+visual explanations or coordinate accuracy; audit pilot reasoning separately.
+
+Linearize a completed run using its frozen manifest (also copied into the run):
+
+```bash
+python scripts/mcts/build_reasoning_chains_from_mcts.py \
+  --data-str data/mcts/YOUR_RUN_DIRECTORY --data-root data \
+  --split-manifest data/hallucination/prepared/manifest.json
+```
+
+The converter preserves train/dev/test assignments, writing separate train,
+validation, and test files. `scripts/rl/build_amber_discriminative_rl.py` also
+accepts `--split-manifest` and detects this prepared manifest by default, rather
+than making an independent RL split. LongHalQA choice tasks remain evaluation
+data and are not silently converted to binary training questions.
+The existing coordinate filter is configurable with `--allow-no-coordinate` for
+observations such as image-wide absence; coordinate presence does not establish
+localization correctness.
+
+These are project-held-out partitions. Previously trained checkpoints retain
+their earlier data exposure; start a fresh student from the same public base
+when comparing teachers under this split. Run regression checks with
+`python -m unittest discover -s tests -v`.
 
 ---
 

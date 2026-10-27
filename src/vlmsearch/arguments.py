@@ -12,6 +12,8 @@ def get_args():
     parser.add_argument("--c_puct", type=float, default=2.0)
     parser.add_argument("--data_files", type=str, default="")
     parser.add_argument("--image_root", type=str, default="")
+    parser.add_argument("--split_manifest", default=None, help="Frozen image-disjoint split manifest")
+    parser.add_argument("--data_split", choices=["train", "dev", "test"], default=None)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--top_k", type=int, default=10)

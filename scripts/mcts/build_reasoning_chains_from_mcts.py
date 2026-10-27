@@ -7,6 +7,7 @@ import random
 import re
 from collections import Counter, defaultdict
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -14,10 +15,12 @@ try:
 except ImportError:
     wandb = None
 from PIL import Image, ImageDraw
+from vlmsearch.data_manifest import FrozenDataManifest
+from vlmsearch.reward_funcs.answers import parse_final_answer
 
 
 ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
-THINK_RE = re.compile(r"<think>\s*(.*?)\s*</think>", flags=re.IGNORECASE | re.DOTALL)
+THINK_RE = re.compile(r"<(think|evidence)>\s*(.*?)\s*</\1>", flags=re.IGNORECASE | re.DOTALL)
 COORD_RE = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
 
 AMBER_DISCRIMINATIVE_SYSTEM_PROMPT = """You are a careful visual verifier answering a yes/no multiple-choice question about an image.
@@ -50,20 +53,7 @@ Rules:
 
 
 def normalize_yes_no_answer(text: Any) -> Optional[str]:
-    if text is None:
-        return None
-
-    answer = str(text).strip()
-    answer_match = ANSWER_RE.search(answer)
-    if answer_match:
-        answer = answer_match.group(1)
-
-    answer = answer.strip().lower()
-    answer = re.sub(r"^[\s\[{(]+|[\s\]})]+$", "", answer)
-    answer = re.sub(r"[\s.!,;:]+$", "", answer)
-    if answer in {"yes", "no"}:
-        return answer
-    return None
+    return parse_final_answer(text, {"yes", "no"})
 
 
 def normalize_system_prompt(system_prompt: Optional[str]) -> str:
@@ -73,6 +63,9 @@ def normalize_system_prompt(system_prompt: Optional[str]) -> str:
         "Use the checked visual evidence to choose the better-supported yes/no answer.",
     )
     prompt = prompt.replace("option letter", "yes/no answer")
+    # Qwen's visible-evidence protocol avoids its native reasoning delimiter;
+    # student traces retain the established <think>/<answer> format.
+    prompt = prompt.replace("<evidence>", "<think>").replace("</evidence>", "</think>")
     return prompt
 
 
@@ -89,12 +82,16 @@ def is_user_prompt_text(text: str, question: str) -> bool:
 
 
 def extract_reasoning_step(text: str) -> Optional[str]:
-    if not text or ANSWER_RE.search(text):
+    if not text:
         return None
 
-    think_blocks = [block.strip() for block in THINK_RE.findall(text) if block.strip()]
+    think_blocks = [match.group(2).strip() for match in THINK_RE.finditer(text) if match.group(2).strip()]
     if think_blocks:
         return "\n".join(think_blocks).strip()
+    if ANSWER_RE.search(text) or normalize_yes_no_answer(text) is not None:
+        return None
+    if re.search(r"</?(?:think|evidence)\b", text, flags=re.IGNORECASE):
+        return None
 
     cleaned = strip_image_tags(text)
     cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE).strip()
@@ -110,7 +107,10 @@ def normalize_rollout_chain(
     if not ephemeral_texts:
         return None, None, "missing_ephemeral_texts"
 
-    answer = normalize_yes_no_answer(rollout.get("final_answer"))
+    raw_answer = rollout.get("raw_final_answer")
+    if raw_answer is not None and normalize_yes_no_answer(raw_answer) is None:
+        return None, None, "invalid_raw_final_answer"
+    answer = normalize_yes_no_answer(raw_answer or rollout.get("final_answer"))
     if answer is None:
         for text in reversed(ephemeral_texts):
             answer = normalize_yes_no_answer(text)
@@ -120,7 +120,10 @@ def normalize_rollout_chain(
         return None, None, "invalid_final_answer"
 
     reasoning_steps = []
-    for text in ephemeral_texts:
+    reasoning_texts = list(ephemeral_texts)
+    if raw_answer and raw_answer not in reasoning_texts:
+        reasoning_texts.append(raw_answer)
+    for text in reasoning_texts:
         if is_user_prompt_text(text, question):
             continue
         step = extract_reasoning_step(text)
@@ -202,7 +205,8 @@ def extract_think_points(chain_text: str):
     all_points = []
     point_idx = 1
 
-    for block in THINK_RE.findall(chain_text):
+    for match in THINK_RE.finditer(chain_text):
+        block = match.group(2)
         for x_str, y_str in COORD_RE.findall(block):
             try:
                 x = float(x_str)
@@ -223,7 +227,8 @@ def parse_args():
         help="Path to a rollout JSONL file or a directory containing rollout JSONL files.",
     )
     parser.add_argument("--output-dir", default=None, help="Directory for generated reasoning chain files.")
-    parser.add_argument("--val-size", type=float, default=0.1, help="Validation fraction by sample key.")
+    parser.add_argument("--val-size", type=float, default=0.1, help="Legacy fallback validation fraction by image.")
+    parser.add_argument("--split-manifest", default=os.environ.get("DATA_SPLIT_MANIFEST"), help="Use the frozen train/dev/test assignments; auto-detected in new rollout directories")
     parser.add_argument("--max-samples-per-file", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-to-wandb", action="store_true", help="Log a small HTML preview to W&B.")
@@ -380,16 +385,35 @@ def main():
     data_files = discover_data_files(args.data_str)
     rows = list(iter_jsonl_rows(data_files))
 
+    manifest_path = args.split_manifest
+    if not manifest_path:
+        candidates = {os.path.join(os.path.dirname(path), "split_manifest.json") for path in data_files}
+        existing = sorted(path for path in candidates if os.path.isfile(path))
+        if existing:
+            fingerprints = {Path(path).read_bytes() for path in existing}
+            if len(fingerprints) != 1:
+                raise ValueError("Rollout directories contain different frozen split manifests")
+            manifest_path = existing[0]
+    manifest = FrozenDataManifest(manifest_path, args.data_root) if manifest_path else None
+    if not manifest and any(row.get("split_manifest_sha256") for _, _, row in rows):
+        raise ValueError("These rollouts require their frozen --split-manifest")
+
     sample_keys = sorted(
         {sample_key_for_row(data_file, line_idx, data_json, args.data_root) for data_file, line_idx, data_json in rows}
     )
-    random.shuffle(sample_keys)
-    val_count = int(len(sample_keys) * args.val_size)
-    val_keys = set(sample_keys[:val_count])
+    image_keys = sorted({normalize_image_path(row.get("image", ""), args.data_root) for _, _, row in rows if not row.get("error")})
+    random.shuffle(image_keys)
+    val_images = set(image_keys[:int(len(image_keys) * args.val_size)])
+    if manifest:
+        val_keys = {key for key in sample_keys if key in manifest.samples and manifest.samples[key]["split"] == "dev"}
+    else:
+        val_keys = {sample_key_for_row(path, line, row, args.data_root) for path, line, row in rows if normalize_image_path(row.get("image", ""), args.data_root) in val_images}
+    test_keys = {key for key in sample_keys if manifest and key in manifest.samples and manifest.samples[key]["split"] == "test"}
 
     all_chains_text = []
     sft_entries_train = []
     sft_entries_val = []
+    sft_entries_test = []
     all_images_processed = set()
     chain_global_id = 0
     correct_count = 0
@@ -399,8 +423,11 @@ def main():
         "rows_seen": len(rows),
         "sample_keys": len(sample_keys),
         "val_size": args.val_size,
-        "train_sample_keys": len(sample_keys) - len(val_keys),
+        "train_sample_keys": len(sample_keys) - len(val_keys) - len(test_keys),
         "val_sample_keys": len(val_keys),
+        "test_sample_keys": len(test_keys),
+        "split_policy": "frozen_manifest" if manifest else "legacy_image_grouped",
+        "split_manifest_sha256": manifest.sha256 if manifest else None,
         "counts": Counter(),
         "filters": Counter(),
         "per_file_rows": defaultdict(int),
@@ -423,7 +450,8 @@ def main():
             continue
 
         sample_key = sample_key_for_row(data_file, line_idx, data_json, args.data_root)
-        split = "val" if sample_key in val_keys else "train"
+        manifest_metadata = manifest.validate_rollout(data_json) if manifest else {}
+        split = manifest_metadata["data_split"] if manifest else ("dev" if sample_key in val_keys else "train")
         chains, root_node_value, sample_stats = build_all_reasoning_for_sample(
             data_json,
             require_coordinate=require_coordinate,
@@ -451,6 +479,7 @@ def main():
                     "source_line": line_idx,
                     "sample_key": sample_key,
                     "split": split,
+                    **manifest_metadata,
                     "rollout_idx": chain["rollout_idx"],
                     "reward": chain["reward"],
                     "root_node_value": root_node_value,
@@ -465,8 +494,10 @@ def main():
             }
             if split == "train":
                 sft_entries_train.append(chain_entry)
-            else:
+            elif split == "dev":
                 sft_entries_val.append(chain_entry)
+            else:
+                sft_entries_test.append(chain_entry)
             all_images_processed.add(image)
             chain_global_id += 1
 
@@ -496,9 +527,12 @@ def main():
     print(f"Saved train SFT data to: {train_json_path}  (count={len(sft_entries_train)})")
     write_json(val_json_path, sft_entries_val)
     print(f"Saved val SFT data to: {val_json_path}  (count={len(sft_entries_val)})")
+    test_json_path = os.path.join(out_dir, "reasoning_chains_test.json")
+    write_json(test_json_path, sft_entries_test)
 
     report["counts"]["train_entries"] = len(sft_entries_train)
     report["counts"]["val_entries"] = len(sft_entries_val)
+    report["counts"]["test_entries"] = len(sft_entries_test)
     report["counts"]["unique_images"] = len(all_images_processed)
     report["counts"] = dict(report["counts"])
     report["filters"] = dict(report["filters"])

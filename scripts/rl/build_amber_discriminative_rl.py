@@ -9,6 +9,7 @@ import random
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+from vlmsearch.data_manifest import FrozenDataManifest
 
 
 TYPE_TO_CATEGORY = {
@@ -38,6 +39,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=data_root / "mllm_hal/rl")
     parser.add_argument("--val-fraction", type=float, default=0.10)
     parser.add_argument("--seed", type=int, default=42)
+    default_manifest = data_root / "hallucination/prepared/manifest.json"
+    parser.add_argument("--split-manifest", type=Path,
+                        default=os.environ.get("DATA_SPLIT_MANIFEST") or (default_manifest if default_manifest.exists() else None),
+                        help="Reuse frozen AMBER train/dev/test image groups instead of independently splitting")
     return parser.parse_args()
 
 
@@ -272,6 +277,37 @@ def write_outputs(
 
 def main() -> None:
     args = parse_args()
+    if args.split_manifest:
+        manifest = FrozenDataManifest(args.split_manifest, args.data_root)
+        partitions = {split: [] for split in ("train", "dev", "test")}
+        for sample_id, sample in sorted(manifest.samples.items()):
+            if sample["dataset"] != "amber":
+                continue
+            metadata = manifest.validate_sample(sample_id, sample["image"], sample["question"], sample["answer"])
+            partitions[sample["split"]].append({
+                "id": sample_id,
+                "prompt": "<image>\n" + sample["question"],
+                "answer": sample["answer"],
+                "images": [sample["image"]],
+                "image_key": sample["cluster_id"],
+                "category": sample.get("category", sample["task"]),
+                "amber_type": sample.get("category", sample["task"]),
+                **metadata,
+            })
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        filenames = {"train": "train", "dev": "val", "test": "test"}
+        for split, rows in partitions.items():
+            path = args.output_dir / f"amber_discriminative_{filenames[split]}.jsonl"
+            write_jsonl(path, rows)
+            print(f"Wrote {len(rows)} {split} rows to {path}")
+        report = {
+            "split_policy": "frozen_manifest",
+            "split_manifest": str(manifest.path),
+            "split_manifest_sha256": manifest.sha256,
+            "partitions": {split: split_counts(rows) for split, rows in partitions.items()},
+        }
+        (args.output_dir / "amber_discriminative_split_report.json").write_text(json.dumps(report, indent=2) + "\n")
+        return
     query_file = args.query_file.resolve()
     annotation_file = args.annotation_file.resolve()
     data_root = args.data_root.resolve()

@@ -18,6 +18,7 @@ from openai import AzureOpenAI, AsyncAzureOpenAI
 import os
 import logging
 import wandb  # Added import for Weights & Biases
+from vlmsearch.reward_funcs.answers import strict_match_answer
 
 logger = logging.getLogger(__name__)
 
@@ -508,18 +509,11 @@ class Judge:
         
         """
 
-        #Accounitng for the fact that the answers may be in different cases
-        gt_ans = gt_ans.lower()
-
-        pred_ans = self._remove_punctuation_spaces(pred_ans)
-        gt_ans = self._remove_punctuation_spaces(gt_ans)
-
-        if gt_ans == pred_ans or gt_ans in pred_ans:
-            logger.debug(f"Judge response : 1.0")
-            return 1.0
-        else:
-            logger.debug(f"Judge response : 0.0")
-            return 0.0
+        score = strict_match_answer(
+            gt_ans, pred_ans, self.final_token_begin, self.final_token_end
+        )
+        logger.debug("Judge strict answer score: %s", score)
+        return score
     
     def _check_gt_ans_yes_no(self, gt_ans: str) -> bool:
 

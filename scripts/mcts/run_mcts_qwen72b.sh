@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)    # get the directory of the current script (default: scripts/mcts)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of the repository (default: grounded-rl-hal)
@@ -7,6 +8,10 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)                  # get the root of th
 NUM_GPUS=${NUM_GPUS:-2} # set this to >=4 for 72b models, 1-2 for 3b,7b models
 NUM_PROCESSES=${NUM_PROCESSES:-4}
 dataset="${DATASET:-amber_discriminative}" # sat2, web_grounding, vstar, web_action, amber_discriminative, amber_generative
+if [[ "$dataset" == "amber_discriminative" ]]; then
+  echo "[INFO] AMBER now uses run_mcts_qwen38.sh; run_mcts_qwen72b.sh is a legacy name."
+  exec bash "$REPO_ROOT/scripts/mcts/run_mcts_qwen38.sh" "$@"
+fi
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1} # set this to the GPUs you want to use
 export CUDA_VISIBLE_DEVICES
 
@@ -25,8 +30,9 @@ PORT=${PORT:-9011} # port for vllm server
 export PORT
 
 # export DATA_ROOT so that src/vlmsearch/datasets can find the data files
-DATA_ROOT="${DATA_ROOT:-/scratch/jjg6977/indie_projects/mllm_hallucination/grounded-rl-hal/data}"
+DATA_ROOT="${DATA_ROOT:-$REPO_ROOT/data}"
 export DATA_ROOT
+cd -- "$REPO_ROOT"
 
 if [ "$dataset" == "sat2" ]; then
   SYSTEM_PROMPT="""You are a helpful assistant tasked with answering a question about an image. You should systematically reason through the problem step by step by checking and verifying relevant image regions, while grounding reasoning steps to specific (x, y) points in the image:\nEach reasoning step must be enclosed within '<think>' tags and reference exactly one specific coordinate (x, y):\n<think>\n{Single reasoning step with a grounded point} (x, y).\n</think>\nWhen ready to provide the final answer, enclose it within '<answer>' tags:\n<answer> {text of final answer} </answer>\nYour task is to help the user answer the question that may involve small details in the image.\n- Generate ONLY ONE reasoning step OR the final answer per response.\n- Regions are distinct, non-overlapping areas (e.g., quadrants like top-left, small elements or objects, zones like background/foreground).\n- Each step should describe the region then evaluate it for its relevance to the task and to previous steps.\n- Never repeat coordinates from previous steps.\n- Begin by exploring diverse regions, even if they seem less likely, to ensure comprehensive coverage before narrowing down.\n- Prioritize broad coverage of diverse candidates before deciding.\n- Aim for accurate, representative points in the described area/element/object.\n- If unclear, infer based on likely context or purpose.\n- Your final answer should be the text of the choice you think is most correct.\n- Verify each step by examining multiple possible solutions before selecting a final coordinate.\n- Format points as (x, y)"""
@@ -132,18 +138,22 @@ MODEL="${MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}"
 ACTOR_MODEL="qwen_vllm"
 
 # Add a cleanup function to kill the vLLM server on script exit
+SERVER_PID=""
 cleanup() {
-  echo "[INFO] Cleaning up resources..."
-  # Find and kill the vLLM server process
-  if pgrep -f "vllm serve" >/dev/null 2>&1; then
-    echo "[INFO] Killing vLLM server process..."
-    pkill -f "vllm serve"
+  status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$SERVER_PID" ]] && jobs -pr | grep -Fx "$SERVER_PID" >/dev/null; then
+    echo "[INFO] Stopping the teacher process group started by this launcher ($SERVER_PID)."
+    kill -TERM -- "-$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
   fi
-  exit 0
+  exit "$status"
 }
 
 # # Set trap to call cleanup function on script exit, including Ctrl+C (SIGINT)
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ---------------------------------------------------------------------
 # 1) If ACTOR_MODEL is "qwen_vllm", check if the vllm server is running.
@@ -153,13 +163,14 @@ trap cleanup EXIT INT TERM
 if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
   # Simple check: see if something is already listening on the configured port
   # or if "vllm serve" is in the process list
-  if lsof -Pi :${PORT} -sTCP:LISTEN -t >/dev/null 2>&1 || pgrep -f "vllm serve" >/dev/null 2>&1; then
+  if curl -fsS --max-time 2 -H 'Authorization: Bearer qwen' "http://localhost:${PORT}/v1/models" >/dev/null 2>&1; then
     echo "[INFO] vllm server is already running on port ${PORT}"
   else
     echo "[INFO] Starting vllm server via serve_qwen.sh ..."
     echo "[INFO] VLLM logs saving to vllm_logs/ ..."
     # You can pass $MODEL and GPU count from environment or SLURM variables
-    bash scripts/vllm/serve_qwen.sh "$MODEL" "${NUM_GPUS}" "${PORT}" "${CUDA_VISIBLE_DEVICES}" &
+    setsid bash scripts/vllm/serve_qwen.sh "$MODEL" "${NUM_GPUS}" "${PORT}" "${CUDA_VISIBLE_DEVICES}" &
+    SERVER_PID=$!
     sleep 5  # brief pause before checking
   fi
 
@@ -169,7 +180,7 @@ if [ "$ACTOR_MODEL" == "qwen_vllm" ]; then
   # ----------------------------------------------------------------
   echo "[INFO] Please wait for vllm server to be responsive..."
   for i in {1..360}; do
-    if curl --max-time 2 -s -o /dev/null http://localhost:${PORT}/v1/models; then
+    if curl -fsS --max-time 2 -H 'Authorization: Bearer qwen' -o /dev/null "http://localhost:${PORT}/v1/models"; then
       echo "[INFO] vllm server is up!"
       break
     else
@@ -203,7 +214,6 @@ python -m src.vlmsearch \
     --num_children_per_expand ${NUM_CHILDREN_PER_EXPAND} \
     --c_puct ${C_PUCT} \
     --save_rollouts_dir "${SAVE_ROLLOUTS_DIR}" \
-    --add_thought_number_system_prompt \
     --system_prompt "${SYSTEM_PROMPT}" \
     --pretrained "${MODEL}" \
     --image_root "${IMAGE_ROOT}" \
