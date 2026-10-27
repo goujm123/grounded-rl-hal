@@ -14,13 +14,15 @@ import urllib.parse
 import urllib.request
 
 from vlmsearch.data_manifest import FrozenDataManifest
+from vlmsearch.data_review import ReviewedTrainingData
+from vlmsearch.image_geometry import NORMALIZED_COORDINATE_INSTRUCTION
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_PROMPT = """You are a careful visual verifier answering a yes/no question about an image.
 Check visible evidence for the queried object, attribute, count, action, or relation.
 Return exactly ONE of these blocks, with no text outside it:
-<evidence>A brief visible observation, with a representative image-pixel coordinate (x, y) when a location helps.</evidence>
+<evidence>A brief visible observation, with a representative coordinate (x, y) when a location helps.</evidence>
 <answer> yes </answer>
 <answer> no </answer>
 If the user's message has no Previous evidence, start with one concise visual observation.
@@ -28,6 +30,8 @@ Previous evidence in the user's message contains your earlier observations. When
 Coordinates are evidence anchors, not proof of a claim. Check both entities for relations.
 Do not infer details that are not visible. Do not repeat evidence or invent extra steps.
 Never write multiple answer blocks or text after the final answer block."""
+SYSTEM_PROMPT += "\n" + NORMALIZED_COORDINATE_INSTRUCTION
+SYSTEM_PROMPT += "\nFor an absent object, describe the visible scene or checked regions; do not invent a point for the absent object."
 
 
 class EndpointMismatch(RuntimeError):
@@ -55,7 +59,7 @@ def verify_endpoint(base_url, api_key, model_name, model_path):
     return True
 
 
-def validate_input(data_file, manifest_file, split, data_root=None):
+def validate_input(data_file, manifest_file, split, data_root=None, review=None):
     frozen = FrozenDataManifest(manifest_file, data_root or manifest_file.parent)
     if not frozen.data.get("manifest_id"):
         raise ValueError("Prepared split manifest must include its frozen manifest_id")
@@ -79,6 +83,10 @@ def validate_input(data_file, manifest_file, split, data_root=None):
             )
             if metadata["dataset"] != "amber" or not sample_id.startswith("amber:"):
                 raise ValueError("This training launcher accepts only AMBER; POPE and LongHalQA are held out")
+            if review:
+                if sample_id in review.excluded_ids:
+                    continue
+                review.validate_sample(sample_id)
             count += 1
     if not count:
         raise ValueError(f"MCTS input is empty: {data_file}")
@@ -129,6 +137,8 @@ def main():
     prepared = data_root / "hallucination/prepared"
     data_file = Path(os.environ.get("DATA_FILE", prepared / f"amber/{args.split}.mcts.jsonl")).expanduser().resolve()
     manifest = Path(os.environ.get("SPLIT_MANIFEST", prepared / "manifest.json")).expanduser().resolve()
+    review_path = (Path(os.environ.get("AMBER_REVIEW_OVERLAY", REPO_ROOT / "configs/data/amber_train_review_v1.json")).expanduser().resolve()
+                   if args.split == "train" else None)
     model_path = Path(os.environ.get("QWEN38_MODEL_PATH", os.environ.get("MODEL", Path.home() / "models/Qwen3.8-27B"))).expanduser().resolve()
     port = os.environ.get("QWEN38_PORT", os.environ.get("PORT", "9011"))
     base_url = os.environ.get("QWEN_VLLM_BASE_URL", f"http://127.0.0.1:{port}/v1")
@@ -155,12 +165,16 @@ def main():
     ]
     if args.max_samples:
         command += ["--max_samples", str(args.max_samples)]
+    if review_path:
+        command += ["--review_overlay", str(review_path)]
     if args.dry_run:
         print(json.dumps({"data_file": str(data_file), "manifest": str(manifest), "split": args.split,
+                          "review_overlay": str(review_path) if review_path else None,
                           "model_path": str(model_path), "endpoint": base_url, "command": command}, indent=2))
         return 0
-    count = validate_input(data_file, manifest, args.split, data_root)
-    print(f"Validated {count} {args.split} questions against the frozen manifest", flush=True)
+    review = ReviewedTrainingData(review_path, FrozenDataManifest(manifest, data_root)) if review_path else None
+    count = validate_input(data_file, manifest, args.split, data_root, review=review)
+    print(f"Validated {count} eligible {args.split} questions against the frozen manifest and review", flush=True)
     environment = dict(os.environ, DATA_ROOT=str(data_root), QWEN38_MODEL_PATH=str(model_path),
                        QWEN38_PORT=port, PORT=port, QWEN38_API_KEY=api_key, QWEN_VLLM_API_KEY=api_key,
                        QWEN38_SERVED_MODEL_NAME=model_name, QWEN_VLLM_MODEL=model_name,

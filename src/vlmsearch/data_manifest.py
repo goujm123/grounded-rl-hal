@@ -102,7 +102,8 @@ def attach_manifest(samples, manifest, expected_split=None):
 
 def tag_rollout(output, sample):
     output["id"] = sample["id"]
-    for key in ("data_split", "image_group", "split_manifest_sha256", "dataset", "task"):
+    for key in ("data_split", "image_group", "split_manifest_sha256", "dataset", "task",
+                "review_overlay_id", "review_overlay_sha256"):
         if key in sample:
             output[key] = sample[key]
     return output

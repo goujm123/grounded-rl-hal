@@ -1,0 +1,2352 @@
+{
+  "schema_version": 1,
+  "name": "amber_train_review_v1",
+  "created_at_utc": "2026-10-27T07:10:12.385217+00:00",
+  "frozen_manifest": {
+    "path": "data/hallucination/prepared/manifest.json",
+    "sha256": "9943532a307fc3e4b9776f3d8cd9d00423ba172b97a9667eff362a1faffcac6f",
+    "manifest_id": "b62801ac2760c091e84abe8d2556df8e6291d3e682f2f229d4f8f20d7445c2d7"
+  },
+  "source_revision": "534babf6bbfcce2e735c26289dedfb21cef3c939",
+  "source_files": {
+    "annotations": {
+      "path": "data/hallucination/raw/amber/annotations.json",
+      "sha256": "db22a436c4836fbb295e60b4e80d519573077579fb7032f01b193c1bd022b797"
+    },
+    "discriminative_queries": {
+      "path": "data/hallucination/raw/amber/query/query_discriminative.json",
+      "sha256": "1502887ac020f4bb7ea564af4e37bddcb030d61b78490d00f9da492a2307abb8"
+    },
+    "normalized_amber": {
+      "path": "data/hallucination/normalized/amber.jsonl",
+      "sha256": "f98dfc58965a440c209926287ed81b6025601cef1e45edb0526b4e8000706650"
+    },
+    "download_manifest": {
+      "path": "data/hallucination/raw/amber/download-manifest.json",
+      "sha256": "ace50ea95828aa792b960feb457d928ccb7a2ae23ae2b918662765544cc82eb3"
+    }
+  },
+  "candidate_review_provenance": {
+    "candidate_annotation_audit": {
+      "path": "reports/amber_analysis/annotation_audit.json",
+      "sha256": "bb77f06a7a940a9147713705f452a1311f1b86b6140edb6ed2a33e3977e31294",
+      "required_at_runtime": false
+    },
+    "prior_visual_review": {
+      "path": "reports/amber_analysis/visual_review.json",
+      "sha256": "cbb6db706863e34fb62ccd0892a91cb9332b023b7b4fb92a947bc0d10b968a5f",
+      "required_at_runtime": false
+    }
+  },
+  "reviewer": {
+    "type": "automated_agent",
+    "identity": "Codex visual review agent",
+    "method": "Direct visual inspection of all63 exact-question contact cards using image-view tools, with original images and six supplemental detail crops inspected for uncertain cases. This is automated review, not human adjudication or independent ground truth."
+  },
+  "scope": "Training-view retain/exclude overlay for all51 AMBER TRAIN cross-task annotation candidates, ten earlier action/scalar/relation suspects and two consistent cycling controls. Every official question, gold label, image and train/dev/test assignment is preserved.",
+  "policy": {
+    "allowed_decisions": [
+      "retain",
+      "exclude"
+    ],
+    "label_changes_allowed": false,
+    "held_out_changes_allowed": false,
+    "uncertain_flagged_case": "exclude",
+    "retain_definition": "The original supplied label is supported confidently under the documented visible-object interpretation.",
+    "excluded_definition": "Likely incorrect supplied label or unresolved ambiguity; exclusion does not supply a replacement answer.",
+    "depictions": "For resolved kite/sign/painting cases, distinguish an actual object in the photographed scene from its shape or depiction.",
+    "sun_visibility": "Require identifiable visible sun rather than inferring a sun solely from illumination or reflection.",
+    "limitations": [
+      "Targeted candidate review is not a dataset-wide error-rate estimate.",
+      "Automated visual assessment may be mistaken; exclusions are conservative and retain rationale for further review.",
+      "Unflagged training items have not all been visually adjudicated.",
+      "Original official benchmark exports and all held-out labels remain unchanged."
+    ]
+  },
+  "entries": [
+    {
+      "id": "amber:1007",
+      "split": "train",
+      "question": "Is the mountain short in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_1.jpg",
+      "image_sha256": "1e1a527288fc383735d8a0980e3fc378cfaa74abc0c35fc2edb906bc368d1fd5",
+      "original_label": "yes",
+      "category": "discriminative-attribute-state",
+      "cluster_id": "image:823850295f996aaeebe5e57a",
+      "candidate_flag_reasons": [
+        "relative_attribute_ambiguous"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The mountains or hills are distant and appear low in the frame. Short has no comparison standard and apparent size does not establish physical height.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-15.jpg"
+      ],
+      "contact_sheet_position": 3
+    },
+    {
+      "id": "amber:1553",
+      "split": "train",
+      "question": "Does the person cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_68.jpg",
+      "image_sha256": "d013ffb4c0e2b57487463317dfed03446bcd5610269d0c25aab3d9f2a82421e9",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:c0475402b7772ec306346161",
+      "candidate_flag_reasons": [
+        "likely_question_label_mismatch"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A person is riding a horse; no bicycle is visible. English cycling=yes conflicts with the depicted activity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-13.jpg"
+      ],
+      "contact_sheet_position": 4
+    },
+    {
+      "id": "amber:1554",
+      "split": "train",
+      "question": "Does the person sit in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_68.jpg",
+      "image_sha256": "d013ffb4c0e2b57487463317dfed03446bcd5610269d0c25aab3d9f2a82421e9",
+      "original_label": "no",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:c0475402b7772ec306346161",
+      "candidate_flag_reasons": [
+        "nonexclusive_action_pair"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The person is seated on a horse. Sitting and riding are not mutually exclusive, so the paired sit=no label requires an unstated activity convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-14.jpg"
+      ],
+      "contact_sheet_position": 2
+    },
+    {
+      "id": "amber:2691",
+      "split": "train",
+      "question": "Does the person cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_223.jpg",
+      "image_sha256": "8de5b27d136018162c869b93ed307f57a02a1331e0bd5cbf5b7a48b4e8a6cb03",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:0c1b3ee695ad6353e19fc864",
+      "candidate_flag_reasons": [
+        "likely_question_label_mismatch"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "Three people ride horses along the beach; no bicycles are visible. English cycling=yes conflicts with the depicted activity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-14.jpg"
+      ],
+      "contact_sheet_position": 1
+    },
+    {
+      "id": "amber:2692",
+      "split": "train",
+      "question": "Does the person sit in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_223.jpg",
+      "image_sha256": "8de5b27d136018162c869b93ed307f57a02a1331e0bd5cbf5b7a48b4e8a6cb03",
+      "original_label": "no",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:0c1b3ee695ad6353e19fc864",
+      "candidate_flag_reasons": [
+        "nonexclusive_action_pair"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The riders are seated on horses. Sit=no appears to treat riding as exclusive of sitting without stating that convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-14.jpg"
+      ],
+      "contact_sheet_position": 3
+    },
+    {
+      "id": "amber:3123",
+      "split": "train",
+      "question": "Does the person cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_280.jpg",
+      "image_sha256": "4a83e046040c4002418650440ecb68cef58896fde22f59f4f86db55e68c6ad0b",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:7ff414d363437d833d29b358",
+      "candidate_flag_reasons": [
+        "ambiguous_translation_riding_vs_cycling"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The person rides a motorcycle, not a bicycle. Cycling=yes depends on interpreting cycling as generic riding or motorcycling, which the English question does not specify.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-14.jpg"
+      ],
+      "contact_sheet_position": 4
+    },
+    {
+      "id": "amber:3567",
+      "split": "train",
+      "question": "Does the man cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_336.jpg",
+      "image_sha256": "b998a869f9f6c8669017dfa11fe8bcc3d432116f8d58db75ce5f4554fcc3b2cb",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:f775c8c8bd3e978bda6a0c4a",
+      "candidate_flag_reasons": [
+        "cycling_template_visually_consistent_control"
+      ],
+      "decision": "retain",
+      "assessment": "control_label_supported",
+      "rationale": "The man visibly rides a bicycle along the path. The original cycling=yes is consistent with the depicted activity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-16.jpg"
+      ],
+      "contact_sheet_position": 2
+    },
+    {
+      "id": "amber:3569",
+      "split": "train",
+      "question": "Does the woman cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_336.jpg",
+      "image_sha256": "b998a869f9f6c8669017dfa11fe8bcc3d432116f8d58db75ce5f4554fcc3b2cb",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:f775c8c8bd3e978bda6a0c4a",
+      "candidate_flag_reasons": [
+        "cycling_template_visually_consistent_control"
+      ],
+      "decision": "retain",
+      "assessment": "control_label_supported",
+      "rationale": "The woman visibly rides a second bicycle behind the man. The original cycling=yes is consistent with the depicted activity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-16.jpg"
+      ],
+      "contact_sheet_position": 3
+    },
+    {
+      "id": "amber:3889",
+      "split": "train",
+      "question": "Does the person cycling in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_377.jpg",
+      "image_sha256": "f8902406ef81651b6f58189ae95d8bab20e0fa162947998449b5c1f8cba16886",
+      "original_label": "yes",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:cdf264cfe40e765e761d1d1a",
+      "candidate_flag_reasons": [
+        "ambiguous_translation_riding_vs_cycling"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The person sits on a motorcycle on gravel. Cycling=yes is ambiguous between bicycle riding, motorcycle riding and merely posing on a vehicle.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-15.jpg"
+      ],
+      "contact_sheet_position": 1
+    },
+    {
+      "id": "amber:3890",
+      "split": "train",
+      "question": "Does the person stop in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_377.jpg",
+      "image_sha256": "f8902406ef81651b6f58189ae95d8bab20e0fa162947998449b5c1f8cba16886",
+      "original_label": "no",
+      "category": "discriminative-attribute-action",
+      "cluster_id": "image:cdf264cfe40e765e761d1d1a",
+      "candidate_flag_reasons": [
+        "motion_not_established"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The motorcycle rider has one foot down and appears posed or stationary. A single still frame does not establish stop=no, and the visible posture makes that negative especially unreliable.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-15.jpg"
+      ],
+      "contact_sheet_position": 2
+    },
+    {
+      "id": "amber:8317",
+      "split": "train",
+      "question": "Is the island small in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_947.jpg",
+      "image_sha256": "071c329e1584310df95d0b47a126cf2ed56c7f2e2f194e7192591b1166a42e8f",
+      "original_label": "yes",
+      "category": "discriminative-attribute-state",
+      "cluster_id": "image:1355658ad6ae012e52418ce6",
+      "candidate_flag_reasons": [
+        "relative_attribute_ambiguous"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The distant island appears small in the photograph, but its physical size and comparison standard are unspecified. Do not force a scalar yes label as objectively grounded.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-15.jpg"
+      ],
+      "contact_sheet_position": 4
+    },
+    {
+      "id": "amber:8801",
+      "split": "train",
+      "question": "Is there a sun in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_35.jpg",
+      "image_sha256": "e3c86fdbfa16ab50a248118dd54fa878cbb36cd56397329d2e804467657fbb47",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:9b05beb77ba74c1f06d39c8b",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth",
+        "likely_question_label_mismatch"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A distinct bright sun disk is visible directly on the sea horizon; original sun=no conflicts with the photographed content.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-01.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "sun",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "person",
+        "sea",
+        "backpack",
+        "ground",
+        "guardrail",
+        "sun",
+        "railing"
+      ],
+      "generative_hallu": [
+        "sun",
+        "bench",
+        "fish",
+        "bird"
+      ]
+    },
+    {
+      "id": "amber:9248",
+      "split": "train",
+      "question": "Is there a sun in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_127.jpg",
+      "image_sha256": "a6865b8a330023f386bed4859d3a53152d41d60d73d22caaae4adcad6b3d36c4",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:304f4b0d4ff14cedb08ae101",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The frame shows a tent, person, mountains and illuminated sky, but no visible sun disk. Lighting does not establish a visible sun; the original no is supported.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-01.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "sun",
+      "generative_truth": [
+        "tent",
+        "ground",
+        "mountain",
+        "sky",
+        "person",
+        "hat",
+        "stone",
+        "sun"
+      ],
+      "generative_hallu": [
+        "sun",
+        "cloud",
+        "cup",
+        "backpack"
+      ]
+    },
+    {
+      "id": "amber:9285",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_134.jpg",
+      "image_sha256": "f67585b132ee04253fa505fad9e998f7a145306fcdcbc8481cb7e46b4ba63f88",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:7b0608a2d75695071c22ba6e",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A sandy shoreline is visible at the bottom around the children in shallow water. The original beach=no is inconsistent with visible beach sand.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-01.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "beach",
+      "generative_truth": [
+        "child",
+        "sea",
+        "beach"
+      ],
+      "generative_hallu": [
+        "sky",
+        "cloud",
+        "mountain",
+        "ship",
+        "beach"
+      ]
+    },
+    {
+      "id": "amber:9383",
+      "split": "train",
+      "question": "Is there a court in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_155.jpg",
+      "image_sha256": "42f204263283554b8947150bacdca1b9d561ef54d7674e907ad5ffe01a238887",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b3e2f2e841c1b366ad73b8d7",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The photograph looks upward at a basketball player, hoop, trees and sky. The bottom-edge detail contains trees and sky, not a visible playing-court surface; the original no is supported without inferring a court from its hoop.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-01.jpg",
+        "reports/amber_label_review/detail-AMBER_155.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "court",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "person",
+        "basketball",
+        "support",
+        "tree",
+        "court"
+      ],
+      "generative_hallu": [
+        "grass",
+        "court",
+        "house",
+        "dog"
+      ]
+    },
+    {
+      "id": "amber:9486",
+      "split": "train",
+      "question": "Is there a floor in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_176.jpg",
+      "image_sha256": "0de2dc65e86f9fd5cc4a921d5a07d7b0813ecb9777dc6592114af99f21fc0ab8",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:3a8b24b3a9461a4ef16771be",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A carpeted or rug-covered floor is visible beneath the chair. The negative floor label depends on an unstated distinction between floor and floor covering; exclude rather than force that convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-02.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "floor",
+      "generative_truth": [
+        "toy",
+        "bear",
+        "chair",
+        "wall",
+        "carpet",
+        "floor",
+        "cushion"
+      ],
+      "generative_hallu": [
+        "floor",
+        "ceiling",
+        "door",
+        "window",
+        "light"
+      ]
+    },
+    {
+      "id": "amber:9529",
+      "split": "train",
+      "question": "Is there a wine in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_184.jpg",
+      "image_sha256": "a845da64ae8312cf02869c1e5b8ff5fc15b73ace1156eda1fe33c68def63f586",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:93055055d169e4752ba0aef5",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A wine glass contains yellow liquid. Its appearance is consistent with wine, but liquid identity cannot be determined uniquely from this image, so the negative wine label is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-02.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "wine",
+      "generative_truth": [
+        "person",
+        "wineglass",
+        "wine"
+      ],
+      "generative_hallu": [
+        "candle",
+        "steak",
+        "table",
+        "wine"
+      ]
+    },
+    {
+      "id": "amber:9649",
+      "split": "train",
+      "question": "Is there a car in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_210.jpg",
+      "image_sha256": "4d3a2471e4f66d385ede4ae784eb1f5f4d33d6b5506f5e8ad8a8cdc25835eafa",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:362ebcd11b74e2c4d1197685",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth",
+        "part_whole_ambiguity"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A vehicle tire and wheel are visible behind the cat, while the full vehicle is cropped out. Car=no depends on part-versus-whole and vehicle-type conventions that the question does not specify.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-02.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "car",
+      "generative_truth": [
+        "cat",
+        "ground",
+        "tire",
+        "car"
+      ],
+      "generative_hallu": [
+        "car",
+        "person",
+        "sky",
+        "sun",
+        "cloud"
+      ]
+    },
+    {
+      "id": "amber:9786",
+      "split": "train",
+      "question": "Is there a road in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_238.jpg",
+      "image_sha256": "2864c58a4657693d3767ece4783b1a943de6b088605d17aa29b6fa635eaee13f",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:d80e1f421b9b2ec38d5f7d3a",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A narrow gray paved strip is visible behind the dog and lawn. The image does not clearly distinguish road from sidewalk or driveway; the original negative is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-02.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "road",
+      "generative_truth": [
+        "grass",
+        "forest",
+        "house",
+        "dog",
+        "toy",
+        "frisbee",
+        "road",
+        "flower"
+      ],
+      "generative_hallu": [
+        "road",
+        "person",
+        "tent",
+        "sky",
+        "sun"
+      ]
+    },
+    {
+      "id": "amber:9920",
+      "split": "train",
+      "question": "Is there a floor in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_266.jpg",
+      "image_sha256": "2916faa37cc16f0e719c9d005de8a4521e78739617105eb8a599e5d78ee1f54a",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:7e7401dbbda8ca9824dc9280",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Dark flooring is visible at the bottom of the room beneath the bookcase. The negative floor label is not reliably supported; darkness and partial visibility make the intended convention unclear.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-03.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "floor",
+      "generative_truth": [
+        "curtain",
+        "clock",
+        "lamp",
+        "cat",
+        "cabinet",
+        "book",
+        "wall",
+        "file",
+        "floor",
+        "table",
+        "window",
+        "magazine"
+      ],
+      "generative_hallu": [
+        "sofa",
+        "floor",
+        "chair",
+        "person"
+      ]
+    },
+    {
+      "id": "amber:10185",
+      "split": "train",
+      "question": "Is there a butterfly in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_321.jpg",
+      "image_sha256": "c296b656800760317111312bd1b5bcba0a44c36e9655e8348402b018899d8636",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:631245a30dab2eb51db2e0e3",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The butterfly-shaped object is a kite with fabric panels, seams and control lines, not a biological butterfly. No actual butterfly is visible; retain the original no under ordinary object identity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-03.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "butterfly",
+      "generative_truth": [
+        "woman",
+        "kite",
+        "sky",
+        "tussock",
+        "butterfly",
+        "child",
+        "line"
+      ],
+      "generative_hallu": [
+        "man",
+        "butterfly",
+        "bird",
+        "cloud",
+        "dog"
+      ]
+    },
+    {
+      "id": "amber:10233",
+      "split": "train",
+      "question": "Is there a computer in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_331.jpg",
+      "image_sha256": "b2b24b8a5b770e1d7fe6d8abd821144d2090ff8dd10629d222719257df2abbe6",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:a0c3e713eb1b3aafcfe57c8a",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth",
+        "part_whole_ambiguity"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Keyboard, mouse and part of a monitor or its base are visible. No full computer system unit is shown. Computer=no depends on whether peripherals and a partly visible system count as the computer.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-03.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "computer",
+      "generative_truth": [
+        "mouse",
+        "keyboard",
+        "table",
+        "computer",
+        "monitor"
+      ],
+      "generative_hallu": [
+        "computer",
+        "chair",
+        "light",
+        "sofa",
+        "earphone"
+      ]
+    },
+    {
+      "id": "amber:10300",
+      "split": "train",
+      "question": "Is there a support in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_344.jpg",
+      "image_sha256": "c377ed52b2b98ab1466c77591323a6c4f84672f1698d0cec28d93e4916ef7677",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:2cfa20184d1ae208e409f387",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Toothbrushes stand in a cylindrical holder in front of a mirror. The noun support does not identify a unique object class and could refer to this holder; the negative label is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-03.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "support",
+      "generative_truth": [
+        "mirror",
+        "toothbrush",
+        "cup",
+        "wall",
+        "support"
+      ],
+      "generative_hallu": [
+        "sink",
+        "tap",
+        "support",
+        "toilet",
+        "bin"
+      ]
+    },
+    {
+      "id": "amber:10351",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_354.jpg",
+      "image_sha256": "676e50b79c7f8303280ded589194d425973c6779206419a9bb9ecd60812496f6",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b5348b79dadedc5530237bab",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A side table is plainly visible at the left of the beds, and a bedside stand is visible between them. The original table=no conflicts with visible furniture.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-04.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "table",
+      "generative_truth": [
+        "bed",
+        "pillow",
+        "wall",
+        "cabinet",
+        "lamp",
+        "ground",
+        "table",
+        "plate"
+      ],
+      "generative_hallu": [
+        "television",
+        "hanger",
+        "chair",
+        "table",
+        "cup"
+      ]
+    },
+    {
+      "id": "amber:10418",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_368.jpg",
+      "image_sha256": "30bdb5e5d8d9c4ac5a9098f0469418ca9b59eee1e17c280684a5fe3400910232",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:3a1f2eb7251339a279d1026c",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The cake rests on a gray textured support surface, whose edges and legs are cropped out. It could be a table or counter; table=no is not established by the visible crop.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-04.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "table",
+      "generative_truth": [
+        "cake",
+        "kiwifruit",
+        "peach",
+        "strawberry",
+        "table",
+        "cream",
+        "paper"
+      ],
+      "generative_hallu": [
+        "table",
+        "person",
+        "milk",
+        "fork"
+      ]
+    },
+    {
+      "id": "amber:10448",
+      "split": "train",
+      "question": "Is there a sky in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_374.jpg",
+      "image_sha256": "5e4af40f6fdd35a2a44765baff76db2c855537ffdcb065e962d941c854b3a53d",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:297439ef0674d5b202de7e44",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Small pale blue-gray background gaps appear between bare tree branches, but no broad sky region is isolated. Whether these count as visible sky is unresolved at the source image resolution.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-04.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "sky",
+      "generative_truth": [
+        "forest",
+        "river",
+        "grass",
+        "bicycle",
+        "toy",
+        "cat",
+        "road",
+        "sky"
+      ],
+      "generative_hallu": [
+        "sun",
+        "sky",
+        "cloud",
+        "flower",
+        "person"
+      ]
+    },
+    {
+      "id": "amber:10473",
+      "split": "train",
+      "question": "Is there a computer in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_379.jpg",
+      "image_sha256": "553f3af4e7316850898bf64a02193ad3a809a19ec2d1ac0f4ffbb58b04b760b8",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:affa83fab02825b81c39ffb3",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A keyboard and mouse lie under the cat, while the computer body or full display is not shown. The negative depends on a computer-versus-peripheral convention rather than unambiguous absence.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-04.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "computer",
+      "generative_truth": [
+        "snack",
+        "cat",
+        "mouse",
+        "keyboard",
+        "table",
+        "cable",
+        "computer",
+        "rice"
+      ],
+      "generative_hallu": [
+        "person",
+        "computer",
+        "chair",
+        "cup",
+        "mousepad"
+      ]
+    },
+    {
+      "id": "amber:10518",
+      "split": "train",
+      "question": "Is there a door in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_388.jpg",
+      "image_sha256": "8e2d6b3d8617eae98a82353818bfcd21291a998a4d275a64b585a05c90c11ac9",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b75cfced9c8b29b252a38598",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Tall white-framed glass openings are visible behind the chair. The crop does not clearly distinguish a glass door from a window; door=no is unresolved.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-05.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "door",
+      "generative_truth": [
+        "carpet",
+        "cat",
+        "chair",
+        "flowerpot",
+        "pot",
+        "wall",
+        "door",
+        "window",
+        "glass"
+      ],
+      "generative_hallu": [
+        "person",
+        "light",
+        "door",
+        "cathole",
+        "table"
+      ]
+    },
+    {
+      "id": "amber:10577",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_400.jpg",
+      "image_sha256": "669c72e4791617de81c2b277a137d7b26d5d1dbb3c14667aae0e7cf087eb40ea",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:c08a02c455f4081c577790a9",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A wooden bedside table with a lamp is visible to the right of the bed. The original table=no conflicts with this visible furniture.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-05.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "table",
+      "generative_truth": [
+        "bed",
+        "pillow",
+        "wall",
+        "cabinet",
+        "lamp",
+        "bowl",
+        "window",
+        "grass",
+        "socket",
+        "sheet",
+        "table",
+        "floor"
+      ],
+      "generative_hallu": [
+        "person",
+        "table",
+        "lounge",
+        "cabinet",
+        "dresser"
+      ]
+    },
+    {
+      "id": "amber:10579",
+      "split": "train",
+      "question": "Is there a cabinet in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_400.jpg",
+      "image_sha256": "669c72e4791617de81c2b277a137d7b26d5d1dbb3c14667aae0e7cf087eb40ea",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:c08a02c455f4081c577790a9",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The bedside furniture is partly occluded by bedding. It can be described as a cabinet or nightstand, but its storage structure is not fully visible; cabinet=no depends on an unstated naming convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-05.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "cabinet",
+      "generative_truth": [
+        "bed",
+        "pillow",
+        "wall",
+        "cabinet",
+        "lamp",
+        "bowl",
+        "window",
+        "grass",
+        "socket",
+        "sheet",
+        "table",
+        "floor"
+      ],
+      "generative_hallu": [
+        "person",
+        "table",
+        "lounge",
+        "cabinet",
+        "dresser"
+      ]
+    },
+    {
+      "id": "amber:10667",
+      "split": "train",
+      "question": "Is there a mirror in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_418.jpg",
+      "image_sha256": "82f8d82990ce95a9c1337610692b642e1a2c901bf125304f290724b27d03bc26",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b348b4723602104151670f16",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The image has the appearance of a camera-facing mirror self-portrait, but a separate mirror frame or boundary is not shown. Mirror existence through a reflection versus a direct visible object is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-05.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "mirror",
+      "generative_truth": [
+        "door",
+        "wall",
+        "sunglasses",
+        "person",
+        "camera",
+        "tie",
+        "mirror"
+      ],
+      "generative_hallu": [
+        "table",
+        "mirror",
+        "light",
+        "floor"
+      ]
+    },
+    {
+      "id": "amber:10673",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_419.jpg",
+      "image_sha256": "888fd59084b6b8f043032551fdf16ee8cab704ff04e4e1c7b39c9ddf5f4fafc8",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:fc5475f32f5bdb1cd0f0cfa9",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The person stands in shallow breaking surf over brownish substrate. Dry land is not clearly shown; whether the intertidal region counts as beach is unspecified, so the negative is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-06.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "beach",
+      "generative_truth": [
+        "person",
+        "toy",
+        "frisbee",
+        "sea",
+        "glass",
+        "hat",
+        "beach"
+      ],
+      "generative_hallu": [
+        "surfboard",
+        "mountain",
+        "sky",
+        "beach",
+        "reef"
+      ]
+    },
+    {
+      "id": "amber:10762",
+      "split": "train",
+      "question": "Is there a bed in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_437.jpg",
+      "image_sha256": "a95eb9b4e38f366dedc3cc214e0a9a733e158b85686afecc3da66bbc45b49a7d",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:49a952d85b1093f7f1eb8e29",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "An ornate mirror reflects an out-of-focus interior containing indistinct furniture. A bed cannot be confidently identified or ruled out within that blurred reflection.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-06.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "bed",
+      "generative_truth": [
+        "vase",
+        "flower",
+        "lamp",
+        "mirror",
+        "curtain",
+        "bed",
+        "drawing",
+        "wall",
+        "window"
+      ],
+      "generative_hallu": [
+        "table",
+        "person",
+        "bed",
+        "chair"
+      ]
+    },
+    {
+      "id": "amber:10846",
+      "split": "train",
+      "question": "Is there a sky in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_455.jpg",
+      "image_sha256": "768caf813bd5f90814e9d9a01cef568717a488dd38674d17b7d74afc8f1eb111",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:0036acb4d63fd5ffe05e3af2",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The snowy park is framed mainly by ground and trees, with gray mist or sky visible through the distant branches. The source resolution does not resolve the sky-versus-fog convention.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-06.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "sky",
+      "generative_truth": [
+        "tree",
+        "person",
+        "snow",
+        "bench",
+        "dog",
+        "sky",
+        "road"
+      ],
+      "generative_hallu": [
+        "sky",
+        "sun",
+        "cloud",
+        "cup",
+        "car"
+      ]
+    },
+    {
+      "id": "amber:10938",
+      "split": "train",
+      "question": "Is there a backpack in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_473.jpg",
+      "image_sha256": "d0fb1edca82880e2f2d909dfadf9319fc9ab497676c88cb3a52186b70b900d38",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:abbab784da68c57d7cfccc01",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The skier wears prominent chest straps and shoulder harness pieces, consistent with a backpack whose main body is behind the person. Backpack=no depends on whether visible parts establish the whole object.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-06.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "backpack",
+      "generative_truth": [
+        "sun",
+        "sky",
+        "cloud",
+        "snow",
+        "snow",
+        "mountain",
+        "person",
+        "snowboard",
+        "pole",
+        "hat",
+        "glass",
+        "glove",
+        "backpack"
+      ],
+      "generative_hallu": [
+        "sled",
+        "dog",
+        "rabbit",
+        "backpack"
+      ]
+    },
+    {
+      "id": "amber:10954",
+      "split": "train",
+      "question": "Is there a person in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_477.jpg",
+      "image_sha256": "497b2d071cd0ab21f7a101da598dbc416c93d01a605290463e43a87dafe003ad",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:41e69fa3511da17ab4ecc814",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Two suitcases dominate the frame, but a shoe and a small clothing fragment enter at the lower-right edge. Person=no depends on whether a cropped body part counts as a person.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-07.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "person",
+      "generative_truth": [
+        "baggage",
+        "floor",
+        "shoe",
+        "person"
+      ],
+      "generative_hallu": [
+        "person",
+        "bench",
+        "wall",
+        "door",
+        "ceiling"
+      ]
+    },
+    {
+      "id": "amber:10986",
+      "split": "train",
+      "question": "Is there a bird in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_483.jpg",
+      "image_sha256": "d146e1c5261311d04c92456a8dddc8077d45a6c0ba82d2d0a950770d7159d4e8",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b3d473cea03f3c0fb94cf7d2",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A flock of small birds is visibly silhouetted in the sky above the buses. The original bird=no conflicts with visible birds.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-07.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "bird",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "ground",
+        "bus",
+        "bird"
+      ],
+      "generative_hallu": [
+        "person",
+        "luggage",
+        "bird",
+        "sun",
+        "car"
+      ]
+    },
+    {
+      "id": "amber:11128",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_512.jpg",
+      "image_sha256": "af00459cdf3af5c7bf689eee9190f8a829513da8d7745a56d5f9c9cd432c965e",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:b6b52c30da6829491bebd324",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The frame shows a girl on a surfboard and open water with breaking waves; no land or beach surface is visible. A seaside activity alone does not establish a visible beach, so retain no.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-07.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "beach",
+      "generative_truth": [
+        "child",
+        "sea",
+        "surfboard",
+        "beach"
+      ],
+      "generative_hallu": [
+        "beach",
+        "tree",
+        "reef",
+        "mountain",
+        "sky"
+      ]
+    },
+    {
+      "id": "amber:11188",
+      "split": "train",
+      "question": "Is there a tennis in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_524.jpg",
+      "image_sha256": "e58a6ccc4413a681e232c472eb107951fce555f64c346982c7cb875767645299",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:d279a2886092886fb4c7129c",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A child holds a tennis racket on grass. The phrase a tennis does not specify whether it means the sport, a ball, or a racket; no cannot be reliably adjudicated without rewriting the question.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-07.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "tennis",
+      "generative_truth": [
+        "forest",
+        "grass",
+        "ground",
+        "car",
+        "table",
+        "bench",
+        "person",
+        "racket",
+        "road",
+        "tennis"
+      ],
+      "generative_hallu": [
+        "tennis",
+        "sky",
+        "house",
+        "dog",
+        "sign"
+      ]
+    },
+    {
+      "id": "amber:11296",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_546.jpg",
+      "image_sha256": "52ebd77da228c9e4c901fb745039fa6b4c782fedcb66356a57dfdfb052bed625",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:112a2124178fcf1a4d75c4ea",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The foreground shows brown sandy shallows and breaking surf around a bodyboard. Whether the intertidal sand counts as beach is unspecified; exclude the negative rather than impose a dry-land-only convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-08.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "beach",
+      "generative_truth": [
+        "pulp",
+        "person",
+        "sea",
+        "beach",
+        "waterfront"
+      ],
+      "generative_hallu": [
+        "beach",
+        "lounge",
+        "tree",
+        "sky",
+        "seegull"
+      ]
+    },
+    {
+      "id": "amber:11442",
+      "split": "train",
+      "question": "Is there a tree in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_575.jpg",
+      "image_sha256": "653d07d23c3763c2d60c0cd9bc0c1ed432920cba38518e974aba8a9167491bce",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:508fdc5eeb3ef5097970b08a",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "Tree trunks enter the frame along the upper edge behind the dog. They are real visible tree parts, making tree=no an unsuitable gold reward under ordinary partial-object recognition.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-08.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "tree",
+      "generative_truth": [
+        "grass",
+        "dog",
+        "toy",
+        "frisbee",
+        "tree"
+      ],
+      "generative_hallu": [
+        "sky",
+        "cloud",
+        "mountain",
+        "tree",
+        "person"
+      ]
+    },
+    {
+      "id": "amber:11450",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_577.jpg",
+      "image_sha256": "1e4775ae2eb0628953226cd463e3acc4e4efb76c05f36c421d979f94a68c91e8",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:5535105e1acb4d74d2bf23db",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A doughnut and plate fill the crop; a dark surface is visible only at the margins. Its identity as table, counter or another support cannot be determined, so the negative table label is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-08.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "table",
+      "generative_truth": [
+        "plate",
+        "bread",
+        "knife",
+        "fork",
+        "tissue",
+        "doughnut",
+        "table"
+      ],
+      "generative_hallu": [
+        "milk",
+        "table",
+        "chair",
+        "person",
+        "light"
+      ]
+    },
+    {
+      "id": "amber:11504",
+      "split": "train",
+      "question": "Is there a sun in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_588.jpg",
+      "image_sha256": "6e059a3d282ca5d265c1012381079d2f2a0d466df0025963400e7a19a2bc28b9",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:daea5440d9d62317a232957d",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The sky is bright behind clouds and palm fronds, with sunlight reflected on the sea, but no distinct sun disk is visible even in the enlarged sky crop. Retain no for visible sun; do not infer it solely from illumination.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-08.jpg",
+        "reports/amber_label_review/detail-AMBER_588.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "sun",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "sea",
+        "tree",
+        "person",
+        "elephant",
+        "ground",
+        "mountain",
+        "bird",
+        "road",
+        "beach",
+        "sun",
+        "child"
+      ],
+      "generative_hallu": [
+        "ship",
+        "sun",
+        "bench",
+        "car",
+        "house"
+      ]
+    },
+    {
+      "id": "amber:11553",
+      "split": "train",
+      "question": "Is there a mountain in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_598.jpg",
+      "image_sha256": "4dd6670ec3f27b3309a5ef30095a89839d6ffd1bad0683951529eaad39830816",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:931e58c985dcabee7678b5b5",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Faint mountain-like peaks can be discerned through heavy cloud or fog behind the skier. Visibility is too marginal to reward a firm mountain=no label reliably.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-09.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "mountain",
+      "generative_truth": [
+        "person",
+        "snow",
+        "snowboard",
+        "pole",
+        "forest",
+        "sky",
+        "hat",
+        "glove",
+        "mountain"
+      ],
+      "generative_hallu": [
+        "mountain",
+        "sun",
+        "cloud",
+        "sled",
+        "house"
+      ]
+    },
+    {
+      "id": "amber:11582",
+      "split": "train",
+      "question": "Is there a cloud in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_604.jpg",
+      "image_sha256": "bfbbbd4f27b62c390620015d620365fde0eb3e56998606be5887b082612a7c78",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:8dc51e32f3a8e601bba37884",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The visible sky around the houses and stop sign is uniformly clear blue without discernible clouds. The original cloud=no is supported.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-09.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "cloud",
+      "generative_truth": [
+        "house",
+        "tree",
+        "guardrail",
+        "ground",
+        "road",
+        "sign",
+        "sky",
+        "cloud",
+        "window",
+        "tape"
+      ],
+      "generative_hallu": [
+        "cloud",
+        "car",
+        "person",
+        "dog",
+        "sun"
+      ]
+    },
+    {
+      "id": "amber:11688",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_625.jpg",
+      "image_sha256": "5eb5914e07dfa53c1ba366d72b269bbfa799e669c30c689a93f13a3799634e14",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:7afa376ed52f96526059fc69",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The dog stands in a reflective shallow-water shoreline region with wet sand or submerged substrate in the foreground. Beach=no depends on how the shoreline and wet sand are counted.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-09.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "beach",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "sea",
+        "dog",
+        "toy",
+        "frisbee",
+        "beach"
+      ],
+      "generative_hallu": [
+        "mountain",
+        "tree",
+        "beach",
+        "lounge",
+        "umbrella"
+      ]
+    },
+    {
+      "id": "amber:11875",
+      "split": "train",
+      "question": "Is there a person in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_663.jpg",
+      "image_sha256": "4b0de3221f093bd115b6d5e37fe7e77562ea01d1ef28daa124eeeef536b93c6f",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:863da8a16f791f825a87a396",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The far end of the park path contains a tiny blue-and-dark shape consistent with a distant person. The enlargement preserves only a few source pixels; absence cannot be established confidently.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-09.jpg",
+        "reports/amber_label_review/detail-AMBER_663.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "person",
+      "generative_truth": [
+        "sky",
+        "forest",
+        "grass",
+        "bench",
+        "ground",
+        "road",
+        "person"
+      ],
+      "generative_hallu": [
+        "person",
+        "streetlamp",
+        "bicycle",
+        "dog",
+        "sign"
+      ]
+    },
+    {
+      "id": "amber:11894",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_666.jpg",
+      "image_sha256": "ec8d0e1f8117dd13a055b7ec5607c877007cd47dbb3f0eb4e1f60fd48cacf8f9",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:22e088719706b48562489d55",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "People stand in shallow surf near a flag; wet sand or the beach-water boundary occupies the foreground. The question lacks a rule for counting this intertidal region as beach.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-10.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "beach",
+      "generative_truth": [
+        "sea",
+        "person",
+        "surfboard",
+        "flag",
+        "waterfront",
+        "beach"
+      ],
+      "generative_hallu": [
+        "sky",
+        "cloud",
+        "mountain",
+        "ship",
+        "beach"
+      ]
+    },
+    {
+      "id": "amber:12133",
+      "split": "train",
+      "question": "Is there a person in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_716.jpg",
+      "image_sha256": "7e1dde2920f38b1c8d08582acc400e74f780fef7071f837fc395a9ada7502a78",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:7deb3e0b1ff4cf2a26bb5485",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The aircraft canopy contains small dark and helmet-like occupant shapes. The crop is not clear enough to certify either person absence or a reliable instance identification; exclude the negative.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-10.jpg",
+        "reports/amber_label_review/detail-AMBER_716.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "person",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "plane",
+        "person"
+      ],
+      "generative_hallu": [
+        "person",
+        "grass",
+        "forest",
+        "mountain",
+        "lake"
+      ]
+    },
+    {
+      "id": "amber:12164",
+      "split": "train",
+      "question": "Is there a beach in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_722.jpg",
+      "image_sha256": "7dc8a1e8103dc16e929484cf07c196b890ef2e2e0d8f3228822eb5d3dccda14c",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:0122f9ba1a2b6090f734739a",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "A narrow sandy shoreline strip is visible behind and around the foreground people at the lower edge. The original beach=no is inconsistent with that visible land.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-10.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "beach",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "sea",
+        "plane",
+        "man",
+        "beach",
+        "sun"
+      ],
+      "generative_hallu": [
+        "mountain",
+        "tree",
+        "beach",
+        "lounge"
+      ]
+    },
+    {
+      "id": "amber:12741",
+      "split": "train",
+      "question": "Is there a ground in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_839.jpg",
+      "image_sha256": "6ba0878013ef8d88239f18687124f59aaa9ef4c179a3eea3363bf412c61be263",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:ad0ab727801587e160b3e2f2",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "The image visibly contains a road, earthen shoulders and vegetated hillsides. Ground is plainly present, so ground=no is unsuitable as a gold reward.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-10.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "ground",
+      "generative_truth": [
+        "sky",
+        "cloud",
+        "mountain",
+        "forest",
+        "ground",
+        "road",
+        "grass"
+      ],
+      "generative_hallu": [
+        "plane",
+        "person",
+        "ground",
+        "bird",
+        "sign"
+      ]
+    },
+    {
+      "id": "amber:12770",
+      "split": "train",
+      "question": "Is there a chair in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_845.jpg",
+      "image_sha256": "a5caf7617aae1328960be8c00545428702cee408c8d44031af1a518aa93dd012",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:fb8e867e82af8fb1fa82a4fd",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "The woman is seated in a fully visible chair with seat, back, arms and legs. The original chair=no clearly conflicts with the image.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-11.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "chair",
+      "generative_truth": [
+        "wall",
+        "floor",
+        "chair",
+        "woman",
+        "wall",
+        "handrail"
+      ],
+      "generative_hallu": [
+        "light",
+        "table",
+        "chair",
+        "window",
+        "door"
+      ]
+    },
+    {
+      "id": "amber:12834",
+      "split": "train",
+      "question": "Is there a floor in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_858.jpg",
+      "image_sha256": "4a8d90c596ef57cfad2ea305a8949c9b4adb76350aa2c1e5462dccf59f9d7bf3",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:6916f6041dc75adf9dc2cbcd",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "Wooden floorboards are plainly visible beneath the table and chairs. The original floor=no clearly conflicts with visible flooring.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-11.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "floor",
+      "generative_truth": [
+        "wall",
+        "bowl",
+        "plate",
+        "table",
+        "chair",
+        "floor",
+        "cup"
+      ],
+      "generative_hallu": [
+        "person",
+        "floor",
+        "knife",
+        "fork",
+        "light"
+      ]
+    },
+    {
+      "id": "amber:12895",
+      "split": "train",
+      "question": "Is there a cloud in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_871.jpg",
+      "image_sha256": "a3c717e7ba86f33b1b03c54f6204ea93eb70452321c149c6fbcd4a17ffd00e6c",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:2eca1c718d7ae450e2505d10",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "likely_incorrect_label",
+      "rationale": "Large gray clouds are visible above the forest and horse. The original cloud=no conflicts with the image.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-11.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "cloud",
+      "generative_truth": [
+        "sky",
+        "horse",
+        "forest",
+        "grass",
+        "stone",
+        "cloud"
+      ],
+      "generative_hallu": [
+        "cloud",
+        "sign",
+        "fence",
+        "person",
+        "cow"
+      ]
+    },
+    {
+      "id": "amber:13058",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_904.jpg",
+      "image_sha256": "eaae290d333b1795b9f281450970e22f66c34bb3b1ea40800fcb5731e040a27f",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:f364712e145c11e9cb33e3c1",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The glass rests on a flat white or gray horizontal surface. Its boundary with the backdrop is visible, but table versus counter or studio platform cannot be determined; negative table is unresolved.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-11.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "table",
+      "generative_truth": [
+        "cup",
+        "lemon",
+        "water",
+        "wineglass",
+        "table"
+      ],
+      "generative_hallu": [
+        "person",
+        "table",
+        "chair",
+        "light",
+        "tissue"
+      ]
+    },
+    {
+      "id": "amber:13097",
+      "split": "train",
+      "question": "Is there a sky in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_912.jpg",
+      "image_sha256": "13c75e78b00c4d4164c8d81925c18079cd6fa2116ff626b4fed1a631d2baf8c6",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:80b29c69d1ca6829cafe2a2b",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "A pale band at the top sits above or blends into the hazy sea horizon. The sky-sea boundary is too indistinct to establish sky absence confidently.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-12.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "sky",
+      "generative_truth": [
+        "sea",
+        "tree",
+        "ship",
+        "flower",
+        "sky"
+      ],
+      "generative_hallu": [
+        "sky",
+        "cloud",
+        "mountain",
+        "person",
+        "beach"
+      ]
+    },
+    {
+      "id": "amber:13358",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_965.jpg",
+      "image_sha256": "4fe45e2b6dbb718cae5dd5ea3cfa7ba5181643be2ceba2fd439b3ee9ac0ae10a",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:798fb9ed2c9f6c41b4e0aa5f",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The glass and lemon rest on a dark horizontal surface. It is consistent with a table, but its furniture identity is outside the crop; table=no is not established.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-12.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "table",
+      "generative_truth": [
+        "lemon",
+        "cup",
+        "water",
+        "glass",
+        "drink",
+        "table"
+      ],
+      "generative_hallu": [
+        "table",
+        "chair",
+        "person",
+        "phone",
+        "plate"
+      ]
+    },
+    {
+      "id": "amber:13381",
+      "split": "train",
+      "question": "Is there a sun in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_969.jpg",
+      "image_sha256": "506c5c9ce831f0964892f497c6d57c739d5f3e3d318d3c433622149b71494c08",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:64afbdf9879b2236802445dd",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The posterized sky contains cloud layers and bright patches but no identifiable sun disk, including in the enlarged upper-sky crop. Retain the visible-sun negative rather than infer a light source.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-12.jpg",
+        "reports/amber_label_review/detail-AMBER_969.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "sun",
+      "generative_truth": [
+        "sky",
+        "forest",
+        "grass",
+        "cloud",
+        "lion",
+        "sun"
+      ],
+      "generative_hallu": [
+        "person",
+        "horse",
+        "bird",
+        "sun",
+        "sign"
+      ]
+    },
+    {
+      "id": "amber:13383",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_970.jpg",
+      "image_sha256": "c73ccfed8a88b0629ad341c29a1570b78243fc60b3e34d9d9b2770fee6dc2548",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:f2b805e3a996e268b20784e7",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Oranges rest on a wooden plank surface. It could be a tabletop or another wood support; no table boundary or legs are shown, so table=no depends on an unstated convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-12.jpg"
+      ],
+      "contact_sheet_position": 4,
+      "queried_object": "table",
+      "generative_truth": [
+        "tangerine",
+        "floor",
+        "table"
+      ],
+      "generative_hallu": [
+        "table",
+        "chair",
+        "plate",
+        "person",
+        "apple"
+      ]
+    },
+    {
+      "id": "amber:13395",
+      "split": "train",
+      "question": "Is there a table in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_972.jpg",
+      "image_sha256": "53f4baad7f9ba3f08bb48b34b522a262dd03085a49bb667a7b6def20e4b2bb42",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:3f4b2ed5d06bfe39549bab53",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The frame shows a wall with two framed still-life paintings. Tables appear only as depicted elements inside those paintings; no actual table is present in the photographed room crop.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-13.jpg"
+      ],
+      "contact_sheet_position": 1,
+      "queried_object": "table",
+      "generative_truth": [
+        "wall",
+        "drawing",
+        "grape",
+        "wine",
+        "wineglass",
+        "table",
+        "tablecloth",
+        "bottle"
+      ],
+      "generative_hallu": [
+        "light",
+        "person",
+        "table",
+        "floor",
+        "sofa"
+      ]
+    },
+    {
+      "id": "amber:13457",
+      "split": "train",
+      "question": "Is there a sky in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_985.jpg",
+      "image_sha256": "298fb3f4fb9028d07a05408a23d162438426c00113569a2c726f9abee8122bde",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:4ef672d4a76010f29d19241d",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "The upper-right background is low-resolution blue haze against the mountains. It cannot be separated confidently into sky versus a more distant mountainside, so the negative sky label remains unresolved.",
+      "confidence": "medium",
+      "evidence_files": [
+        "reports/amber_label_review/contact-13.jpg",
+        "reports/amber_label_review/detail-AMBER_985.jpg"
+      ],
+      "contact_sheet_position": 2,
+      "queried_object": "sky",
+      "generative_truth": [
+        "mountain",
+        "ground",
+        "road",
+        "forest",
+        "sky"
+      ],
+      "generative_hallu": [
+        "sky",
+        "cloud",
+        "car",
+        "motorbike",
+        "sign"
+      ]
+    },
+    {
+      "id": "amber:13469",
+      "split": "train",
+      "question": "Is there a person in this image?",
+      "image": "hallucination/raw/amber/images/AMBER_987.jpg",
+      "image_sha256": "6496dbf2d008cd511636900cccfe6e604e706440c55c0ecab01fc8184ac68880",
+      "original_label": "no",
+      "category": "discriminative-hallucination",
+      "cluster_id": "image:82b969b9f7a7424bc78788f2",
+      "candidate_flag_reasons": [
+        "existence_gold_no_object_in_same_image_generative_truth"
+      ],
+      "decision": "retain",
+      "assessment": "label_supported",
+      "rationale": "The only person-like shape is the flat pictogram printed on a roadworks sign. No actual human is visible in the scene; retain no under ordinary object identity.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-13.jpg"
+      ],
+      "contact_sheet_position": 3,
+      "queried_object": "person",
+      "generative_truth": [
+        "ground",
+        "road",
+        "sign",
+        "grass",
+        "person",
+        "shovel",
+        "support"
+      ],
+      "generative_hallu": [
+        "car",
+        "motorbike",
+        "person",
+        "sky",
+        "cloud"
+      ]
+    },
+    {
+      "id": "amber:14993",
+      "split": "train",
+      "question": "Is there direct contact between the sky and cloud?",
+      "image": "hallucination/raw/amber/images/AMBER_844.jpg",
+      "image_sha256": "04a482287ba63b71b9a9a77d6bdb0e1aa53cf7d0de292b43e382a5b145688e72",
+      "original_label": "yes",
+      "category": "discriminative-relation",
+      "cluster_id": "image:618005d7ac38b08f00ade23d",
+      "candidate_flag_reasons": [
+        "relation_semantics_ambiguous"
+      ],
+      "decision": "exclude",
+      "assessment": "unresolved_ambiguity",
+      "rationale": "Clouds occupy the sky, but direct physical contact between sky and cloud lacks distinct object boundaries or a stated relation convention.",
+      "confidence": "high",
+      "evidence_files": [
+        "reports/amber_label_review/contact-16.jpg"
+      ],
+      "contact_sheet_position": 1
+    }
+  ],
+  "excluded_ids": [
+    "amber:1007",
+    "amber:1553",
+    "amber:1554",
+    "amber:2691",
+    "amber:2692",
+    "amber:3123",
+    "amber:3889",
+    "amber:3890",
+    "amber:8317",
+    "amber:8801",
+    "amber:9285",
+    "amber:9486",
+    "amber:9529",
+    "amber:9649",
+    "amber:9786",
+    "amber:9920",
+    "amber:10233",
+    "amber:10300",
+    "amber:10351",
+    "amber:10418",
+    "amber:10448",
+    "amber:10473",
+    "amber:10518",
+    "amber:10577",
+    "amber:10579",
+    "amber:10667",
+    "amber:10673",
+    "amber:10762",
+    "amber:10846",
+    "amber:10938",
+    "amber:10954",
+    "amber:10986",
+    "amber:11188",
+    "amber:11296",
+    "amber:11442",
+    "amber:11450",
+    "amber:11553",
+    "amber:11688",
+    "amber:11875",
+    "amber:11894",
+    "amber:12133",
+    "amber:12164",
+    "amber:12741",
+    "amber:12770",
+    "amber:12834",
+    "amber:12895",
+    "amber:13058",
+    "amber:13097",
+    "amber:13358",
+    "amber:13383",
+    "amber:13457",
+    "amber:14993"
+  ],
+  "retained_reviewed_ids": [
+    "amber:3567",
+    "amber:3569",
+    "amber:9248",
+    "amber:9383",
+    "amber:10185",
+    "amber:11128",
+    "amber:11504",
+    "amber:11582",
+    "amber:13381",
+    "amber:13395",
+    "amber:13469"
+  ],
+  "summary": {
+    "reviewed_records": 63,
+    "reviewed_unique_images": 58,
+    "cross_task_flagged_train_records": 51,
+    "cross_task_flagged_reviewed": 51,
+    "excluded_records": 52,
+    "retained_reviewed_records": 11,
+    "excluded_by_original_label": {
+      "yes": 7,
+      "no": 45
+    },
+    "assessment_counts": {
+      "unresolved_ambiguity": 39,
+      "likely_incorrect_label": 13,
+      "control_label_supported": 2,
+      "label_supported": 9
+    },
+    "cross_task_decision_counts": {
+      "exclude": 42,
+      "retain": 9
+    },
+    "original_train_records": 11282,
+    "eligible_train_records_after_overlay": 11230
+  },
+  "content_id_algorithm": "SHA256 of UTF-8 json.dumps(document excluding overlay_id,sort_keys=True,separators=(comma,colon),ensure_ascii=False)",
+  "overlay_id": "37330868453fdb5cc5bbeb181574034ff2c8076c261586302a0d82521e5d8d87"
+}

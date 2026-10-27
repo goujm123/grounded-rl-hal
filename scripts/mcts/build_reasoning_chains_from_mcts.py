@@ -16,56 +16,44 @@ except ImportError:
     wandb = None
 from PIL import Image, ImageDraw
 from vlmsearch.data_manifest import FrozenDataManifest
+from vlmsearch.data_review import ReviewedTrainingData
 from vlmsearch.reward_funcs.answers import parse_final_answer
+from vlmsearch.image_geometry import (
+    CoordinateError, PIXEL_COORDINATE_INSTRUCTION,
+    convert_coordinate_text,
+)
 
 
 ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.IGNORECASE | re.DOTALL)
 THINK_RE = re.compile(r"<(think|evidence)>\s*(.*?)\s*</\1>", flags=re.IGNORECASE | re.DOTALL)
 COORD_RE = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
 
-AMBER_DISCRIMINATIVE_SYSTEM_PROMPT = """You are a careful visual verifier answering a yes/no multiple-choice question about an image.
-Your goal is to determine whether the claim in the question is supported by visible evidence in the image.
+STUDENT_PROMPT_VERSION = "amber_grounded_full_response_v1"
+AMBER_DISCRIMINATIVE_SYSTEM_PROMPT = """You are a careful visual verifier answering a yes/no question about an image.
+Determine whether the claim is supported by visible evidence. Give one complete response containing exactly one <think> block followed by exactly one <answer> block, with no text outside those blocks:
+<think>Brief observations that support the answer.</think>
+<answer>yes</answer>
+The answer must be yes or no.
 
-You should reason step by step by checking relevant image regions and verifying evidence for the queried object, attribute, count, action, or relation.
+Check the queried object, attribute, count, action, or relation directly in the image. For relations, check both entities before their relation. Describe only visible evidence; do not infer hidden details or invent objects. Keep observations concise and avoid repetition.
 
-Each reasoning step must be enclosed within think tags. When useful, reference one representative coordinate (x, y) for the region being checked. These coordinates are evidence anchors, not the final answer.
-
-<think>
-{Check one region and describe the visible evidence with a grounded point (x, y)}.
-</think>
-
-When you are ready to answer, output only:
-<answer> yes </answer>
-or
-<answer> no </answer>
-
-Rules:
-
-- Generate only one reasoning step or the final answer per response.
-- Base each step on visible evidence from the image.
-- For existence questions, verify whether the queried object is actually visible and distinguish it from similar objects.
-- For attribute questions, verify the specific property directly from the image rather than assuming it.
-- For relation questions, verify both entities first, then verify the claimed relation.
-- Use the checked visual evidence to choose the better-supported yes/no answer.
-- Do not use world knowledge to infer details that are not visible.
-- If you mention coordinates, avoid repeating the same point unless you are explicitly re-checking that evidence.
-"""
+When a location helps, include a representative point (x, y) for the visible region being checked. Coordinates are evidence anchors, not proof of a claim. For an absent object, describe the checked regions or the image-wide evidence; coordinates may be omitted. Never invent a point for an absent object.
+""" + "\n" + PIXEL_COORDINATE_INSTRUCTION
 
 
 def normalize_yes_no_answer(text: Any) -> Optional[str]:
     return parse_final_answer(text, {"yes", "no"})
 
 
-def normalize_system_prompt(system_prompt: Optional[str]) -> str:
-    prompt = system_prompt or AMBER_DISCRIMINATIVE_SYSTEM_PROMPT
-    prompt = prompt.replace(
-        "Use the checked visual evidence to choose the better-supported option letter.",
-        "Use the checked visual evidence to choose the better-supported yes/no answer.",
-    )
-    prompt = prompt.replace("option letter", "yes/no answer")
-    # Qwen's visible-evidence protocol avoids its native reasoning delimiter;
-    # student traces retain the established <think>/<answer> format.
-    prompt = prompt.replace("<evidence>", "<think>").replace("</evidence>", "</think>")
+def normalize_system_prompt(system_prompt: Optional[str], original_size=None) -> str:
+    # The teacher prompt controls one MCTS generation step. A student target is
+    # a complete trace, so copying the teacher's one-block/previous-evidence
+    # instructions would contradict every target. Retain source prompts in the
+    # original rollout record and use this versioned AMBER student contract.
+    prompt = AMBER_DISCRIMINATIVE_SYSTEM_PROMPT
+    if original_size is not None:
+        width, height = original_size
+        prompt += f"\nThe original image is {width} x {height} pixels; valid points satisfy 0 <= x <= {width - 1} and 0 <= y <= {height - 1}."
     return prompt
 
 
@@ -102,6 +90,10 @@ def normalize_rollout_chain(
     rollout: Dict[str, Any],
     question: str,
     require_coordinate: bool = True,
+    image_geometry=None,
+    original_size=None,
+    legacy_coordinate_frame=None,
+    coordinate_audit=None,
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     ephemeral_texts = rollout.get("ephemeral_texts") or []
     if not ephemeral_texts:
@@ -133,7 +125,16 @@ def normalize_rollout_chain(
     reasoning = "\n".join(reasoning_steps).strip()
     if not reasoning:
         return None, None, "empty_think"
-    if require_coordinate and not COORD_RE.search(reasoning):
+    try:
+        reasoning, mapping = convert_coordinate_text(
+            reasoning, geometry=image_geometry, original_size=original_size,
+            legacy_coordinate_frame=legacy_coordinate_frame,
+        )
+    except CoordinateError as exc:
+        return None, None, str(exc)
+    if coordinate_audit is not None:
+        coordinate_audit["mapping"] = mapping
+    if require_coordinate and not mapping:
         return None, None, "missing_coordinate"
 
     chain_text = f"<think>\n{reasoning}\n</think>\n<answer> {answer} </answer>"
@@ -155,6 +156,8 @@ def iter_tree_rollouts(node_data: Dict[str, Any]):
 def build_all_reasoning_for_sample(
     sample_json: Dict[str, Any],
     require_coordinate: bool = True,
+    original_size=None,
+    legacy_coordinate_frame=None,
 ) -> Tuple[List[Dict[str, Any]], float, Counter]:
     root_node = sample_json.get("tree")
     if not root_node:
@@ -173,10 +176,15 @@ def build_all_reasoning_for_sample(
             continue
 
         stats["correct_rollouts_seen"] += 1
+        coordinate_audit = {}
         chain_text, final_answer, error = normalize_rollout_chain(
             rollout,
             question=question,
             require_coordinate=require_coordinate,
+            image_geometry=sample_json.get("image_geometry"),
+            original_size=original_size,
+            legacy_coordinate_frame=legacy_coordinate_frame,
+            coordinate_audit=coordinate_audit,
         )
         if error:
             stats[f"filtered_{error}"] += 1
@@ -194,6 +202,7 @@ def build_all_reasoning_for_sample(
                 "reward": rollout.get("reward", 0.0),
                 "ephemeral_depth": rollout.get("ephemeral_depth"),
                 "depth": rollout.get("depth"),
+                "coordinate_mapping": coordinate_audit.get("mapping", []),
             }
         )
         stats["chains_kept"] += 1
@@ -229,6 +238,7 @@ def parse_args():
     parser.add_argument("--output-dir", default=None, help="Directory for generated reasoning chain files.")
     parser.add_argument("--val-size", type=float, default=0.1, help="Legacy fallback validation fraction by image.")
     parser.add_argument("--split-manifest", default=os.environ.get("DATA_SPLIT_MANIFEST"), help="Use the frozen train/dev/test assignments; auto-detected in new rollout directories")
+    parser.add_argument("--review-overlay", default=None, help="Train-only annotation review; auto-detected as training_review.json in rollout directories")
     parser.add_argument("--max-samples-per-file", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-to-wandb", action="store_true", help="Log a small HTML preview to W&B.")
@@ -237,6 +247,10 @@ def parse_args():
         "--allow-no-coordinate",
         action="store_true",
         help="Keep chains whose <think> block has no coordinate evidence.",
+    )
+    parser.add_argument(
+        "--legacy-coordinate-frame", choices=("original_pixels",), default=None,
+        help="Explicitly declare coordinate-bearing old traces as original-image pixels; validate bounds. Never inferred from values.",
     )
     parser.add_argument(
         "--data-root",
@@ -397,6 +411,19 @@ def main():
     manifest = FrozenDataManifest(manifest_path, args.data_root) if manifest_path else None
     if not manifest and any(row.get("split_manifest_sha256") for _, _, row in rows):
         raise ValueError("These rollouts require their frozen --split-manifest")
+    review_path = args.review_overlay
+    if not review_path:
+        existing = sorted({os.path.join(os.path.dirname(path), "training_review.json") for path in data_files
+                           if os.path.isfile(os.path.join(os.path.dirname(path), "training_review.json"))})
+        if existing:
+            if len({Path(path).read_bytes() for path in existing}) != 1:
+                raise ValueError("Rollout directories contain different training review overlays")
+            review_path = existing[0]
+    if review_path and manifest is None:
+        raise ValueError("Training review requires a frozen split manifest")
+    review = ReviewedTrainingData(review_path, manifest) if review_path else None
+    if not review and any(row.get("review_overlay_id") or row.get("review_overlay_sha256") for _, _, row in rows):
+        raise ValueError("These rollouts require their --review-overlay / training_review.json")
 
     sample_keys = sorted(
         {sample_key_for_row(data_file, line_idx, data_json, args.data_root) for data_file, line_idx, data_json in rows}
@@ -428,6 +455,10 @@ def main():
         "test_sample_keys": len(test_keys),
         "split_policy": "frozen_manifest" if manifest else "legacy_image_grouped",
         "split_manifest_sha256": manifest.sha256 if manifest else None,
+        "review_overlay_id": review.id if review else None,
+        "review_overlay_sha256": review.sha256 if review else None,
+        "legacy_coordinate_frame": args.legacy_coordinate_frame,
+        "student_prompt_version": STUDENT_PROMPT_VERSION,
         "counts": Counter(),
         "filters": Counter(),
         "per_file_rows": defaultdict(int),
@@ -443,7 +474,10 @@ def main():
 
         question = data_json.get("question", "")
         image = normalize_image_path(data_json.get("image", ""), args.data_root)
-        system_prompt = normalize_system_prompt(data_json.get("system_prompt"))
+        resolved_image_path = resolve_image_path(image, args.data_root)
+        with Image.open(resolved_image_path) as original_image:
+            original_size = original_image.size
+        system_prompt = normalize_system_prompt(data_json.get("system_prompt"), original_size)
         true_answer = normalize_yes_no_answer(data_json.get("true_answer", ""))
         if true_answer is None:
             report["filters"]["invalid_true_answer"] += 1
@@ -451,10 +485,18 @@ def main():
 
         sample_key = sample_key_for_row(data_file, line_idx, data_json, args.data_root)
         manifest_metadata = manifest.validate_rollout(data_json) if manifest else {}
+        if review:
+            review_metadata = review.validate_sample(sample_key)
+            for key, expected in review_metadata.items():
+                if data_json.get(key) != expected:
+                    raise ValueError(f"Rollout {sample_key} has incompatible {key}")
+            manifest_metadata.update(review_metadata)
         split = manifest_metadata["data_split"] if manifest else ("dev" if sample_key in val_keys else "train")
         chains, root_node_value, sample_stats = build_all_reasoning_for_sample(
             data_json,
             require_coordinate=require_coordinate,
+            original_size=original_size,
+            legacy_coordinate_frame=args.legacy_coordinate_frame,
         )
         report["counts"].update(sample_stats)
         if root_node_value > 0:
@@ -483,6 +525,14 @@ def main():
                     "rollout_idx": chain["rollout_idx"],
                     "reward": chain["reward"],
                     "root_node_value": root_node_value,
+                    "student_prompt_version": STUDENT_PROMPT_VERSION,
+                    "coordinate_frame": "original_pixels",
+                    "image_geometry": data_json.get("image_geometry"),
+                    "source_image_geometry": data_json.get("image_geometry"),
+                    "coordinate_mapping": chain["coordinate_mapping"],
+                    "original_image_size": list(original_size),
+                    "legacy_coordinate_frame": args.legacy_coordinate_frame if not data_json.get("image_geometry") else None,
+                    **{key: data_json[key] for key in ("review_overlay_id", "review_overlay_sha256", "pilot_selection_id") if key in data_json},
                 },
                 "messages": [
                     {"role": "system", "content": system_prompt},

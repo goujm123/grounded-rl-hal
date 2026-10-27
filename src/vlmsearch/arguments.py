@@ -13,6 +13,7 @@ def get_args():
     parser.add_argument("--data_files", type=str, default="")
     parser.add_argument("--image_root", type=str, default="")
     parser.add_argument("--split_manifest", default=None, help="Frozen image-disjoint split manifest")
+    parser.add_argument("--review_overlay", default=None, help="Hashed AMBER train-only review decisions; excluded IDs are filtered before sampling")
     parser.add_argument("--data_split", choices=["train", "dev", "test"], default=None)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_p", type=float, default=0.95)

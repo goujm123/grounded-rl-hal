@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from PIL import Image
+from vlmsearch.data_review import content_id
 
 
 SPEC = importlib.util.spec_from_file_location("qwen38_rollout", Path(__file__).resolve().parents[1] / "scripts/mcts/qwen38_rollout.py")
@@ -40,8 +41,15 @@ class LauncherTests(unittest.TestCase):
                            "question": "Is it red?", "answer": "yes"}
         self.data.write_text(json.dumps(self.row) + "\n")
         self.write_manifest()
+        self.review = self.root / "review.json"
+        review = {"schema_version": 1, "entries": [], "excluded_ids": [], "retained_reviewed_ids": [],
+                  "source_files": {}, "frozen_manifest": {"sha256": launcher.FrozenDataManifest(self.manifest, self.root).sha256,
+                  "manifest_id": json.loads(self.manifest.read_text())["manifest_id"]}}
+        review["overlay_id"] = content_id(review)
+        self.review.write_text(json.dumps(review))
         self.environment = {"DATA_ROOT": str(self.root), "DATA_FILE": str(self.data),
-                            "SPLIT_MANIFEST": str(self.manifest), "QWEN38_MODEL_PATH": str(self.root / "model")}
+                            "SPLIT_MANIFEST": str(self.manifest), "QWEN38_MODEL_PATH": str(self.root / "model"),
+                            "AMBER_REVIEW_OVERLAY": str(self.review)}
 
     def write_manifest(self):
         content = {"samples": {self.row["id"]: self.assignment}, "images": {
@@ -91,6 +99,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(spawn.call_count, 1)
         self.assertIn("vlmsearch", spawn.call_args.args[0])
         self.assertNotIn("--add_thought_number_system_prompt", spawn.call_args.args[0])
+        self.assertIn("--review_overlay", spawn.call_args.args[0])
         self.assertTrue(spawn.call_args.kwargs["start_new_session"])
         kill.assert_not_called()
 
@@ -117,6 +126,14 @@ class LauncherTests(unittest.TestCase):
         command = json.loads(output.getvalue())["command"]
         self.assertIn("--split_manifest", command)
         self.assertIn("--data_split", command)
+
+    def test_missing_review_blocks_teacher_start(self):
+        self.review.unlink()
+        with patch.dict(os.environ, self.environment, clear=True), patch.object(launcher.sys, "argv", ["launcher"]), \
+             patch.object(launcher.subprocess, "Popen") as spawn:
+            with self.assertRaises(FileNotFoundError):
+                launcher.main()
+        spawn.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,9 @@ import datetime
 import traceback
 import random
 import shutil
+import copy
+import time
+from PIL import Image
 from tqdm import tqdm
 import openai
 
@@ -17,6 +20,7 @@ from vlmsearch.tree_search.mcts_search import MonteCarloTreeSearch
 from vlmsearch.reward_funcs.judge import Judge
 from datasets import load_dataset
 from vlmsearch.data_manifest import FrozenDataManifest, attach_manifest, tag_rollout
+from vlmsearch.data_review import ReviewedTrainingData, attach_review
 from vlmsearch.reward_funcs.answers import parse_final_answer
 
 import concurrent.futures
@@ -25,6 +29,25 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 logging.basicConfig(level=logging.INFO)
 # logging.basicConfig(level=logging.DEBUG)
 print(f"Logging level: {logging.getLevelName(logging.getLogger().getEffectiveLevel())}")
+
+
+def model_metrics(model):
+    return {key: value for key, value in getattr(model, "metrics", {}).items()
+            if isinstance(value, (int, float))}
+
+
+def tag_model_output(output, sample, model, started, before):
+    tag_rollout(output, sample)
+    output["search_elapsed_seconds"] = time.perf_counter() - started
+    output["model_diagnostics"] = {key: value - before.get(key, 0)
+                                   for key, value in model_metrics(model).items()}
+    geometry = getattr(model, "last_image_geometry", None)
+    if geometry:
+        with Image.open(sample["image"]) as image:
+            if list(image.size) != geometry.get("original_size"):
+                raise ValueError("Teacher image geometry does not match the source image")
+        output["image_geometry"] = copy.deepcopy(geometry)
+    return output
 
 
 def rollout_diagnostics(output):
@@ -177,6 +200,8 @@ def process_samples(
 
             sample["input_query"] = sample["conversations"]["value"][0]
             sample["true_answer"] = sample["conversations"]["value"][1]
+            started = time.perf_counter()
+            before = model_metrics(model_wrapper)
 
             # Execute search with timeout
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -194,7 +219,7 @@ def process_samples(
                         raise RuntimeError("Search returned no rollout records")
                     # Tag each output
                     for out in search_outputs:
-                        tag_rollout(out, sample)
+                        tag_model_output(out, sample, model_wrapper, started, before)
                         for key, value in rollout_diagnostics(out).items():
                             diagnostics[key] += value
                     results.extend(search_outputs)
@@ -266,14 +291,14 @@ def main():
 
     # We'll form a directory for each entire run. We'll store partial files
     # for each worker in that same directory, but with worker_id in the filename.
-    save_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     if args.save_tag:
         save_tag = f"{args.save_tag}_{save_tag}"
 
     out_dir = os.path.join(args.save_rollouts_dir, save_tag)
     # We want each worker to create the directory if not present
     # (in race conditions, you might want a safer approach, but for demonstration:
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=False)
 
     # save args to out_dir
     with open(os.path.join(out_dir, "args.json"), "w") as f:
@@ -285,6 +310,11 @@ def main():
     manifest = FrozenDataManifest(args.split_manifest, args.image_root) if args.split_manifest else None
     if manifest:
         shutil.copy2(manifest.path, os.path.join(out_dir, "split_manifest.json"))
+    if args.review_overlay and not manifest:
+        raise ValueError("A training review requires a frozen split manifest")
+    review = ReviewedTrainingData(args.review_overlay, manifest) if args.review_overlay else None
+    if review:
+        shutil.copy2(review.path, os.path.join(out_dir, "training_review.json"))
 
     if args.use_python_mp:
         #--- Multiprocessing path ---
@@ -299,6 +329,12 @@ def main():
         data_list = list(raw_dataset)
         if manifest:
             attach_manifest(data_list, manifest, args.data_split)
+        if review:
+            original_count = len(data_list)
+            data_list = attach_review(data_list, review)
+            logging.info("Training review admitted %s/%s questions", len(data_list), original_count)
+            if not data_list:
+                raise ValueError("Training review excluded every input sample")
         if args.max_samples is not None:
             if args.max_samples < 1:
                 raise ValueError("max_samples must be positive")
@@ -347,6 +383,8 @@ def main():
             "errors": sum(item["errors"] for item in summaries),
             "split_manifest_sha256": manifest.sha256 if manifest else None,
             "data_split": args.data_split,
+            "review_overlay_id": review.id if review else None,
+            "review_overlay_sha256": review.sha256 if review else None,
             **{key: sum(item[key] for item in summaries) for key in ("trajectories", "valid_final_answers", "positive_trajectories")},
         }
         with open(os.path.join(out_dir, "run_report.json"), "w") as handle:
@@ -375,6 +413,10 @@ def main():
         data_list = list(raw_dataset)
         if manifest:
             attach_manifest(data_list, manifest, args.data_split)
+        if review:
+            data_list = attach_review(data_list, review)
+            if not data_list:
+                raise ValueError("Training review excluded every input sample")
         if args.max_samples is not None:
             if args.max_samples < 1:
                 raise ValueError("max_samples must be positive")
@@ -392,6 +434,8 @@ def main():
             sample["input_query"] = sample["conversations"]["value"][0]
             sample["true_answer"] = sample["conversations"]["value"][1]
             search_outputs = []
+            started = time.perf_counter()
+            before = model_metrics(model_wrapper)
 
             try:
                 search_outputs = tree_searcher.search(
@@ -411,7 +455,7 @@ def main():
                 errors.append({"id": sample["id"], "error": str(e)})
 
             for out in search_outputs:
-                tag_rollout(out, sample)
+                tag_model_output(out, sample, model_wrapper, started, before)
             results.extend(search_outputs)
 
             if (idx + 1) % checkpoint_interval == 0:

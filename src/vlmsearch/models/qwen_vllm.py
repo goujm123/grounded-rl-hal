@@ -1,12 +1,12 @@
 from openai import OpenAI, OpenAIError
 import os
 import sys
-import base64
 from PIL import Image
-from io import BytesIO
 from typing import List, Tuple, Optional
 import json
 import logging
+import time
+from vlmsearch.image_geometry import ImagePayloadCache, NORMALIZED_COORDINATE_INSTRUCTION
 
 # Configure logging to suppress debug messages for this module
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -62,6 +62,16 @@ class Qwen_VLLM():
         self.final_token_end = final_token_end
         self.multicrop = multicrop
         self.repetition_penalty = repetition_penalty
+        self.image_payload_cache = ImagePayloadCache(
+            min_pixels=int(os.getenv("QWEN38_MIN_PIXELS", "65536")),
+            max_pixels=int(os.getenv("QWEN38_MAX_PIXELS", "1048576")),
+            max_entries=int(os.getenv("QWEN38_IMAGE_CACHE_ENTRIES", "16")),
+            max_bytes=int(os.getenv("QWEN38_IMAGE_CACHE_BYTES", str(64 * 1024 * 1024))),
+        )
+        self.last_image_geometry = None
+        self.metrics = {"api_calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                        "image_encode_seconds": 0.0, "image_cache_hits": 0, "image_cache_misses": 0,
+                        "uploaded_image_bytes": 0, "api_seconds": 0.0}
         if examples is not None:
             with open(examples, "r") as f:
                 self.examples = json.load(f)
@@ -112,12 +122,15 @@ class Qwen_VLLM():
         return self._world_size
 
     def _encode_image(self, img: Image.Image) -> str:
-        with BytesIO() as image_buffer:
-            img.save(image_buffer, format="PNG")
-            byte_data = image_buffer.getvalue()
-            img_b64 = base64.b64encode(byte_data).decode("utf-8")
-            img_b64 = "data:image/png;base64," + img_b64
-        return img_b64
+        started = time.perf_counter()
+        hits, misses = self.image_payload_cache.hits, self.image_payload_cache.misses
+        uri, geometry = self.image_payload_cache.encode(img)
+        self.metrics["image_encode_seconds"] += time.perf_counter() - started
+        self.metrics["image_cache_hits"] += self.image_payload_cache.hits - hits
+        self.metrics["image_cache_misses"] += self.image_payload_cache.misses - misses
+        self.metrics["uploaded_image_bytes"] += len(uri)
+        self.last_transport_geometry = geometry
+        return uri
 
     def generate_single_thought(
         self,
@@ -138,6 +151,10 @@ class Qwen_VLLM():
         """
 
         # Build messages for Qwen2-VL
+        # Only a prompt with the explicit contract may declare its coordinates
+        # normalized. Legacy clients must not acquire a frame by inference.
+        normalized_protocol = NORMALIZED_COORDINATE_INSTRUCTION in system_prompt
+        self.last_image_geometry = None
         messages = [
             {
                 "role": "system",
@@ -181,6 +198,13 @@ class Qwen_VLLM():
                     # Convert the image to base64
                     base64_string = self._encode_image(maybe_image)
                     if thought_idx == 0:
+                        if normalized_protocol:
+                            self.last_image_geometry = self.last_transport_geometry
+                            width, height = self.last_image_geometry["original_size"]
+                            tw, th = self.last_image_geometry["transport_size"]
+                            text_str += (f"\n\nImage geometry: original {width} x {height} pixels; "
+                                         f"displayed {tw} x {th} pixels. Point coordinates must use "
+                                         "the normalized 0-1000 grid specified above.")
                         messages.append(
                             {
                                 "role": "user",
@@ -242,6 +266,8 @@ class Qwen_VLLM():
             temperature = self.temperature
 
         try:
+            request_started = time.perf_counter()
+            self.metrics["api_calls"] += 1
             completion = client.chat.completions.create(
                 model=SERVED_MODEL_NAME,
                 messages=messages,
@@ -262,6 +288,13 @@ class Qwen_VLLM():
                     "top_k": self.top_k,
                     }
             )
+            self.metrics["api_seconds"] += time.perf_counter() - request_started
+            usage = getattr(completion, "usage", None)
+            if usage is not None:
+                for metric in ("prompt_tokens", "completion_tokens"):
+                    count = getattr(usage, metric, None)
+                    if isinstance(count, int):
+                        self.metrics[metric] += count
         except OpenAIError as exc:
             raise RuntimeError(
                 f"vLLM request to {BASE_URL} failed or timed out after {TIMEOUT:g}s. "

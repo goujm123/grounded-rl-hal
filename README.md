@@ -208,15 +208,36 @@ separate 9,410-record sensitivity analysis. Do not describe that filtered result
 as the original benchmark score. LongHalQA's `answer` field is authoritative;
 its constant `category="hallucination"` is not a binary label.
 
-To generate Qwen3.8 training rollouts, start with a bounded pilot:
+The versioned `configs/data/amber_train_review_v1.json` records automated visual
+review of all 51 flagged training annotation conflicts, ten additional suspects,
+and two controls. It conservatively excludes 52 records and retains 11 reviewed
+records, leaving 11,230 eligible training questions. Official gold labels and
+frozen split assignments remain unchanged. The overlay records the question,
+image hash, rationale, confidence, and decision for each reviewed record. Its
+content hash and source hashes are verified before training inference. Excluded
+IDs are filtered before sampling and cannot enter reviewed SFT exports.
+
+Prepare a balanced, stratified Qwen3.8 pilot:
 
 ```bash
+python scripts/data/prepare_amber_pilot.py
 bash scripts/mcts/run_mcts_qwen38.sh --dry-run
-bash scripts/mcts/run_mcts_qwen38.sh --max-samples 500
+DATA_FILE=data/hallucination/pilots/amber_150_seed42_v1/pilot.mcts.jsonl \
+  SAVE_TAG=PILOT_AMBER_150_QWEN38 MAX_NEW_TOKENS=256 N_ROLLOUTS_PER_NODE=1 \
+  bash scripts/mcts/run_mcts_qwen38.sh --simulations 2 --max-depth 4 --rollout-max-steps 2
 ```
 
-The launcher validates input labels, image checksums, and the frozen manifest
-before starting inference. It uses the isolated teacher environment, verifies
+This selects 150 distinct image groups with 75 yes and 75 no answers across the
+nine available question-type/label cells, including 32 large images and the
+largest eligible image. Existence questions in this release are all negative;
+there is no original positive-existence cell to sample. `selection.json` freezes
+the selected IDs, quotas, dimensions, and input/review/split hashes. Changed
+selection inputs require a new output directory. These bounded pilot settings
+retain two children per expansion while limiting repeated observations. Record
+the search budget when comparing yield or estimating a larger run.
+
+The launcher validates input labels, image checksums, the frozen manifest, and
+training review before starting inference. It uses the isolated teacher environment, verifies
 the endpoint's model identity, disables native thinking, and requests one visible
 evidence step or final answer at a time. It reuses a matching running server;
 otherwise it starts one and stops only the processes it owns when finished.
@@ -229,8 +250,19 @@ them separate from Qwen's native thinking delimiter. SFT conversion turns those
 observations into the student's established `<think>` format. Stop strings keep
 each API response to one complete evidence or answer block.
 
-New rollout records preserve their split, image cluster, manifest hash, and raw
-final response. The deterministic scorer requires one unambiguous answer and
+New rollout records preserve their split, image cluster, manifest/review hashes,
+image geometry, timing/API counters, and raw final response. The teacher uses an
+explicit normalized 0–1000 coordinate grid. RGB/PNG uploads use the same factor-32
+resize policy and pixel budget as the server and a bounded process-local cache;
+the original image bytes remain unchanged. SFT conversion checks every point,
+converts valid points to zero-based original-image pixels, and preserves both
+the source geometry and coordinate mapping. Negative, nonfinite, malformed, or
+out-of-bounds coordinates are rejected even when coordinate-free observations
+are allowed. Old coordinate-bearing rollouts without geometry require an
+explicit `--legacy-coordinate-frame original_pixels`; their frame is never
+guessed from the numbers.
+
+The deterministic scorer requires one unambiguous answer and
 compares the complete binary/choice label, rejecting substring matches such as
 `unknown` for `no`, duplicate answers, and malformed output. It does not verify
 visual explanations or coordinate accuracy; audit pilot reasoning separately.
@@ -251,6 +283,22 @@ data and are not silently converted to binary training questions.
 The existing coordinate filter is configurable with `--allow-no-coordinate` for
 observations such as image-wide absence; coordinate presence does not establish
 localization correctness.
+
+Analyze the pilot after SFT conversion, supplying its saved selection and run:
+
+```bash
+python scripts/mcts/analyze_amber_pilot.py \
+  --selection data/hallucination/pilots/amber_150_seed42_v1/selection.json \
+  --rollouts-dir data/mcts/YOUR_RUN_DIRECTORY \
+  --sft-dir data/mcts/YOUR_RUN_DIRECTORY/reasoning_chains \
+  --output reports/amber_pilot/report.json
+```
+
+The report separates search yield, parsing validity, coordinate bounds, and
+retention by question type and gold label. Gold-guided MCTS success is not a
+held-out benchmark accuracy estimate. Visually inspect retained claims and
+anchors before scaling; valid syntax and a correct final label alone do not
+establish visual support.
 
 These are project-held-out partitions. Previously trained checkpoints retain
 their earlier data exposure; start a fresh student from the same public base
