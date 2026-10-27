@@ -83,6 +83,59 @@ cd src/trainer/offline
 uv pip install -e ".[torch,metrics]"
 ```
 
+### Cloud server setup with Qwen3.8-27B
+
+The cloud setup uses two conda environments because the vendored training code
+depends on older vLLM worker APIs and Transformers versions:
+
+| Environment | Purpose | Main versions |
+| --- | --- | --- |
+| `grounded-rl` | MCTS client, SFT, and GRPO | Python 3.10, Torch 2.6.0/CUDA 12.4, vLLM 0.8.3, Transformers 4.51.0, FlashAttention 2.7.4.post1, DeepSpeed 0.16.9 |
+| `qwen38-serve` | Qwen3.8 teacher server | Python 3.12, Torch 2.11.0/CUDA 13.0, vLLM 0.26.0, Transformers 5.8.0 |
+
+Miniconda is installed at `~/miniconda3`. Open a new Bash shell, or initialize it
+in the current shell, then activate the project environment:
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate grounded-rl
+python scripts/setup/smoke_training.py --output reports/setup/training-smoke.json
+```
+
+The official BF16 teacher checkpoint is at `~/models/Qwen3.8-27B`, pinned to
+revision `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. Its
+`download-manifest.json` records all 32 upstream file hashes and sizes (55.586 GB).
+The download and verification script is `~/models/download_qwen38.py`.
+
+Start the teacher from the repository root in a separate terminal:
+
+```bash
+bash scripts/vllm/serve_qwen38.sh
+# After the server is ready, from grounded-rl:
+python scripts/setup/smoke_teacher.py --legacy-client
+```
+
+The launcher selects the teacher environment automatically, uses GPU 0 in BF16,
+and serves `qwen_vllm` at `http://127.0.0.1:9011/v1` with API key `qwen`.
+It defaults to 32,768 context tokens, eight concurrent sequences, and native
+thinking disabled, preserving the MCTS client's literal `<think>`/`<answer>`
+output. Stop the server with Ctrl-C before using both GPUs for training.
+
+To distribute the teacher across both GPUs:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 QWEN38_TP_SIZE=2 bash scripts/vllm/serve_qwen38.sh
+```
+
+Use `QWEN38_MODEL_PATH`, `QWEN38_PORT`, `QWEN38_MAX_MODEL_LEN`,
+`QWEN38_MAX_NUM_SEQS`, and `QWEN38_GPU_MEMORY_UTILIZATION` for other settings.
+Keep the MCTS client's `PORT` equal to `QWEN38_PORT` when changing the port.
+`scripts/setup/create_cloud_envs.sh` recreates both environments with their
+matching CUDA compiler toolkits; it requires Miniconda and `uv`. Installed package
+snapshots and validation reports are saved locally under `reports/setup/`.
+Datasets and student checkpoints are configured separately through the existing
+data and training scripts.
+
 ---
 
 ## Data Setup
