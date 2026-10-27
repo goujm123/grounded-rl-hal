@@ -331,7 +331,7 @@ review decisions, and frozen partitions. Its locked cache binds requests to the
 checkpoint, prompts, inference settings, images, and schema. New filtered files
 include accepted-decision provenance; `quality_decisions.jsonl` preserves every
 rejection and `quality_manifest.json` records completion and output hashes.
-Use these filtered files for training. A missing completion manifest indicates
+These files record automated acceptance. A missing completion manifest indicates
 an unfinished or failed filtering run. Output directories must be new; cached
 critiques can be reused on retries. For a full training run omit `--selection`;
 it is a pilot-membership check, not a second data split.
@@ -362,6 +362,22 @@ settings and prompt fingerprints were frozen before validation calls. It audits
 exact reference coverage and the bound requests, responses and retry attempts.
 False acceptances, false rejections, uncertainty and protocol failures are
 reported separately; failed verification earns no bad-claim rejection credit.
+
+If a completed visual audit flags a question, quarantine every accepted variant
+of that question in a new pilot training export:
+
+```bash
+python scripts/mcts/apply_reasoning_review.py \
+  --input-dir data/mcts/YOUR_RUN_DIRECTORY/sft_quality_filtered \
+  --audit reports/YOUR_PILOT/visual_review/visual_audit.json \
+  --output-dir data/mcts/YOUR_RUN_DIRECTORY/sft_reviewed
+```
+
+The curator binds the audit to the exact source exports and reviewed chains,
+preserves the original filter decisions and audit counts, and writes a separate
+exclusion ledger and completion manifest. Train on this post-audit export when
+review exclusions exist. Unreviewed retained chains remain automated decisions;
+quarantining known concerns does not establish their visual correctness.
 
 Analyze the pilot after SFT conversion, supplying its saved selection and run:
 
