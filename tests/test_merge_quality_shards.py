@@ -99,7 +99,7 @@ class QualityShardMergeTests(unittest.TestCase):
         self.assertEqual(report["accepted_chains"], 2)
         self.assertEqual(report["accepted_unique_questions"], 1)
         self.assertEqual(report["verifier_errors"], 0)
-        self.assertEqual(report["model_metrics"]["api_calls"], 8)
+        self.assertEqual(report["model_metrics"]["api_calls"], 10)
         self.assertTrue(report["all_parent_candidates_covered_once"])
         ledger = [json.loads(line) for line in (self.root / "merged/quality_decisions.jsonl").read_text().splitlines()]
         kept = json.loads((self.root / "merged/reasoning_chains_train.json").read_text())
@@ -191,6 +191,30 @@ class QualityShardMergeTests(unittest.TestCase):
         cache.write_bytes(original)
         self.fixture.source.write_text(self.fixture.source.read_text() + " ")
         with self.assertRaisesRegex(ValueError, "checksum changed"):
+            self.merge()
+
+    def test_fine_claim_inventory_cannot_be_removed_by_rehashing(self):
+        self.filter_shards()
+        path = self.shards[0] / "quality_decisions.jsonl"
+        decision = json.loads(path.read_text())
+        verdict = decision["verdict"]
+        del verdict["fine_attribute_targets"]
+        verdict["decision_sha256"] = content_hash({key: item for key, item in verdict.items() if key != "decision_sha256"})
+        path.write_text(json.dumps(decision) + "\n")
+        self.refresh_manifest(self.shards[0])
+        with self.assertRaisesRegex(ValueError, "Fine-attribute source inventory changed"):
+            self.merge()
+
+    def test_completed_decision_cannot_omit_its_fine_attribute_pass(self):
+        self.filter_shards()
+        path = self.shards[0] / "quality_decisions.jsonl"
+        decision = json.loads(path.read_text())
+        verdict = decision["verdict"]
+        del verdict["passes"]["fine_attributes"]
+        verdict["decision_sha256"] = content_hash({key: item for key, item in verdict.items() if key != "decision_sha256"})
+        path.write_text(json.dumps(decision) + "\n")
+        self.refresh_manifest(self.shards[0])
+        with self.assertRaisesRegex(ValueError, "lacks fine-attribute pass"):
             self.merge()
 
 

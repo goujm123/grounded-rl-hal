@@ -255,6 +255,9 @@ The teacher uses literal `<evidence>` blocks for visible observations, keeping
 them separate from Qwen's native thinking delimiter. SFT conversion turns those
 observations into the student's established `<think>` format. Stop strings keep
 each API response to one complete evidence or answer block.
+Native evidence decoding also constrains coordinate parentheses to complete
+numeric pairs in the 0–1000 grid. This prevents malformed or out-of-range pairs;
+the later image-based critic still checks whether a point identifies its claim.
 
 New rollout records preserve their split, image cluster, manifest/review hashes,
 image geometry, timing/API counters, and raw final response. The teacher uses an
@@ -311,9 +314,14 @@ python scripts/mcts/filter_reasoning_quality.py \
 ```
 
 The filter first answers the image question without seeing the proposed answer
-or explanation. It then checks every material claim, describes numbered point
-centers without candidate text, and compares those centers with the claimed
-referents using fresh full-image views and local crops. Gold labels, rewards,
+or explanation. It then checks every material claim. A separate pass describes
+orientation, specific lying posture, material and explicit chromatic-color
+attributes with the claimed values masked; the result must agree with the literal source claim. It describes
+numbered point centers without candidate text, and compares those centers with
+the claimed referents using fresh full-image views and local crops. Local
+part/contact phrases are bound to their point: a hoof claim cannot be approved
+using a broader sheep reference. Ordinary object anchors may still identify any
+visible part of that object. Gold labels, rewards,
 sample IDs, and prior audit findings are never sent to the critic. Uncertainty,
 unsupported assertions, wrong or imprecise referents, repeated observations,
 incomplete responses, and protocol errors withhold the entire chain.
@@ -329,9 +337,31 @@ critiques can be reused on retries. For a full training run omit `--selection`;
 it is a pilot-membership check, not a second data split.
 
 The critic uses the same model with separate prompts and can share its visual
-errors. Calibrate it against audited training examples and visually inspect a
-stratified retained sample; automated acceptance is not a visual correctness
-guarantee.
+errors. Calibrate it against separately reviewed training images outside the
+pilot and prior review sets. Split these references by image group into a
+calibration partition and a locked validation partition. Freeze references before
+critic calls, tune only on calibration, and freeze the policy before validation.
+Authored correct/corrupted pairs are useful challenge cases, but their error
+frequencies do not estimate natural rollout error rates. Visually inspect a
+stratified retained pilot sample as well; automated acceptance is not a visual
+correctness guarantee.
+
+Evaluate completed calibration ledgers without changing any critic decisions:
+
+```bash
+python scripts/mcts/evaluate_critic_calibration.py \
+  --fixture reports/YOUR_REVIEW/calibration_fixture.json \
+  --ledger reports/YOUR_REVIEW/critic_gpu0/quality_decisions.jsonl \
+  --ledger reports/YOUR_REVIEW/critic_gpu1/quality_decisions.jsonl \
+  --partition calibration --output reports/YOUR_REVIEW/calibration_evaluation.json
+```
+
+Use `--partition validation --policy-lock PATH` for locked validation. The
+evaluator documents the lock schema and checks that the source hashes, model,
+settings and prompt fingerprints were frozen before validation calls. It audits
+exact reference coverage and the bound requests, responses and retry attempts.
+False acceptances, false rejections, uncertainty and protocol failures are
+reported separately; failed verification earns no bad-claim rejection credit.
 
 Analyze the pilot after SFT conversion, supplying its saved selection and run:
 

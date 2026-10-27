@@ -49,6 +49,9 @@ class FakeCritic:
                 return [{"risk_target_ids": [r["risk_target_id"] for r in risks], "quote": observation["text"],
                          "assertion_scope": "physical_or_hidden" if any(r["requires_physical_scope"] for r in risks) else "visible_scene_only",
                          "visibility_basis": "direct_visible_evidence", "literal_scope_preserved": True,
+                         "scale_reference_kind": "none_or_undetermined" if any(r.get("requires_visible_scale_reference") for r in risks) else "not_applicable",
+                         "scale_reference_evidence": "No applicable visible scale reference in this mock adjudication.",
+                         "motion_evidence_kind": "blur_or_sharpness_only" if any(r.get("requires_independent_motion_evidence") for r in risks) else "not_applicable",
                          "status": "supported", "reason": "Directly visible evidence establishes the claim."}]
             value = {"image_answer": "yes", "question_unambiguous": True,
                      "observations": [{"observation_id": o["observation_id"], "full_text": o["text"],
@@ -57,12 +60,14 @@ class FakeCritic:
                      "claims": [{"observation_id": o["observation_id"], "quote": o["text"], "status": "supported", "reason": "Pixels support the claim."} for o in observations],
                      "all_observations_checked": True, "explanation_support": "clear", "answer_support": "clear",
                      "repetition": False, "repetition_reason": "No repeated assertion.", "summary": "Supported."}
+        elif stage == "fine_attributes":
+            value = {"attributes": [{"target_id": t["target_id"], "observed_value": {"orientation": "horizontal", "lying_posture": "side_lying", "material": "dirt", "chromatic_color": "red"}[t["feature_kind"]], "clarity": "clear", "visible_basis": "Directly identifiable image feature."} for t in payload["attribute_targets"]]}
         elif stage == "blind_centers":
             value = {"points": [{"point_id": p["point_id"], "center_description": "Red square surface.",
                                   "clarity": "clear", "reason": "The center is visibly red."} for p in payload["points"]]}
         elif stage == "point_referents":
             value = {"points": [{"point_id": p["point_id"], "referent_quote": "red square",
-                                  "status": "correct", "precision": "precise", "reason": "The center is on the named square."} for p in payload["point_claims"]]}
+                                  "checked_attachment_quote": p["attachment"]["attachment_quote"], "attachment_scope_preserved": True, "status": "correct", "precision": "precise", "reason": "The center is on the named square."} for p in payload["point_claims"]]}
         else:
             raise AssertionError(stage)
         if stage in self.changes:
@@ -100,7 +105,7 @@ class VerifierTests(unittest.TestCase):
         verifier = self.verifier(fake)
         first = self.verify(verifier)
         self.assertTrue(first["accepted"], first["reasons"])
-        self.assertEqual(len(fake.calls), 4)
+        self.assertEqual(len(fake.calls), 5)
         payloads = [json.loads(c["messages"][1]["content"][0]["text"]) for c in fake.calls]
         self.assertEqual(set(payloads[0]), {"question"})
         self.assertNotIn("candidate", json.dumps(payloads[2]))
@@ -108,10 +113,10 @@ class VerifierTests(unittest.TestCase):
         self.assertNotIn("(32, 32)", payloads[1]["observations"][0]["text"])
         self.assertEqual(payloads[3]["coordinate_frame"], "original_pixels")
         self.assertNotIn("SECRET_LABEL", json.dumps(fake.calls))
-        self.assertIn("blind_center_observations", payloads[3])
+        self.assertIn("blind_center_observations", payloads[4])
         self.assertTrue(self.verify(verifier)["accepted"])
-        self.assertEqual(len(fake.calls), 4)
-        self.assertEqual(verifier.metrics["cache_hits"], 4)
+        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(verifier.metrics["cache_hits"], 5)
         self.assertEqual(file_sha256(self.image), self.sha)
 
     def test_unsupported_extra_claim_rejects_even_when_answer_is_supported(self):
@@ -121,6 +126,166 @@ class VerifierTests(unittest.TestCase):
         result = self.verify(self.verifier(FakeCritic({"scene_claims": unsupported})))
         self.assertFalse(result["accepted"])
         self.assertIn("material_claim_unsupported", result["reasons"])
+
+    def test_fine_orientation_is_blindly_measured_even_if_scene_passes(self):
+        chain = "<think>A square is visible; the paddle is held vertically.</think><answer>yes</answer>"
+        fake = FakeCritic({"fine_attributes": lambda v: {"attributes": [
+            {**v["attributes"][0], "observed_value": "diagonal", "visible_basis": "Shaft slopes across the image."}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertFalse(result["accepted"])
+        self.assertIn("fine_attribute_value_mismatch", result["reasons"])
+        call = next(c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fine_attributes")
+        payload = json.loads(call["messages"][1]["content"][0]["text"])
+        public = json.dumps(payload)
+        self.assertNotIn("vertically", public)
+        self.assertNotIn("expected_value", public)
+        self.assertNotIn("source_quote", public)
+        self.assertIn("[ATTRIBUTE]", public)
+        self.assertEqual(result["fine_attribute_targets"][0]["expected_value"], "vertical")
+
+    def test_chromatic_inventory_is_explicit_limited_and_backward_compatible(self):
+        observations = ["Pink flowers and red, orange, yellow, green, blue, purple, brown panels are visible.",
+                        "A black train has a white front and gray wheels.", "The sky is blue-gray."]
+        targets = verifier_module.fine_attribute_targets(observations)
+        self.assertEqual([t["expected_value"] for t in targets],
+                         ["pink", "red", "orange", "yellow", "green", "blue", "purple", "brown", "blue_gray"])
+        self.assertTrue(all(t["feature_kind"] == "chromatic_color" for t in targets))
+        self.assertEqual(verifier_module.fine_attribute_targets(observations, include_color=False), [])
+
+    def test_neutral_object_with_small_colored_patch_cannot_satisfy_whole_object_color(self):
+        chain = "<think>Only one train is visible, with a pink locomotive in front.</think><answer>yes</answer>"
+        fake = FakeCritic({"fine_attributes": lambda v: {"attributes": [
+            {**v["attributes"][0], "observed_value": "black", "visible_basis": "The main body is black; only its small front panel is red."}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertTrue(result["verification_complete"])
+        self.assertFalse(result["accepted"])
+        self.assertIn("fine_attribute_value_mismatch", result["reasons"])
+        call = next(c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "fine_attributes")
+        payload = json.loads(call["messages"][1]["content"][0]["text"])
+        self.assertNotIn("pink", json.dumps(payload))
+        self.assertIn("[ATTRIBUTE] locomotive", payload["attribute_targets"][0]["masked_context"])
+        self.assertIn("dominant visible surface", call["messages"][0]["content"])
+
+    def test_correct_explicit_green_color_remains_eligible(self):
+        chain = "<think>The grass is green.</think><answer>yes</answer>"
+        fake = FakeCritic({"fine_attributes": lambda v: {"attributes": [
+            {**v["attributes"][0], "observed_value": "green", "visible_basis": "The grass surface is predominantly green."}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertTrue(result["accepted"], result["reasons"])
+
+    def test_named_colored_part_is_checked_without_coloring_the_whole_object(self):
+        chain = "<think>The locomotive's front panel is red.</think><answer>yes</answer>"
+        result = self.verify(self.verifier(), chain)
+        self.assertTrue(result["accepted"], result["reasons"])
+        target = result["fine_attribute_targets"][0]
+        self.assertIn("front panel", target["masked_context"])
+        self.assertIn("assess only that named part", verifier_module.FINE_ATTRIBUTE_PROMPT)
+
+    def test_orange_fruit_name_does_not_invent_a_color_qualifier(self):
+        texts = ["One orange is on the table.", "The orange at [point_1] is visible.",
+                 "An orange locomotive is visible.", "The fruit is orange."]
+        targets = verifier_module.fine_attribute_targets(texts)
+        self.assertEqual([t["observation_id"] for t in targets], [3, 4])
+        self.assertEqual([t["expected_value"] for t in targets], ["orange", "orange"])
+
+    def test_lying_alone_cannot_establish_a_specific_side_posture(self):
+        chain = "<think>The person lies on his side beside a square.</think><answer>yes</answer>"
+        fake = FakeCritic({"fine_attributes": lambda v: {"attributes": [
+            {**v["attributes"][0], "observed_value": "lying_unspecified", "visible_basis": "Body is horizontal; front versus side is obscured."}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertFalse(result["accepted"])
+        self.assertIn("fine_attribute_uncertain", result["reasons"])
+
+    def test_fine_material_uncertainty_is_not_silently_accepted(self):
+        chain = "<think>A square is beside a dirt path.</think><answer>yes</answer>"
+        fake = FakeCritic({"fine_attributes": lambda v: {"attributes": [
+            {**v["attributes"][0], "observed_value": "other", "clarity": "uncertain", "visible_basis": "Debris obscures the underlying surface."}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertFalse(result["accepted"])
+        self.assertIn("fine_attribute_uncertain", result["reasons"])
+
+    def test_fine_targets_mask_all_values_and_keep_target_entity_location(self):
+        targets = verifier_module.fine_attribute_targets(["A vertical pole stands beside a horizontal rail on a wooden fence."])
+        self.assertEqual([t["expected_value"] for t in targets], ["vertical", "horizontal", "wood"])
+        self.assertIn("[ATTRIBUTE] pole", targets[0]["masked_context"])
+        self.assertIn("[ATTRIBUTE] rail", targets[1]["masked_context"])
+        for target in targets:
+            self.assertNotRegex(target["masked_context"], r"vertical|horizontal|wooden")
+        self.assertFalse(verifier_module.fine_attribute_targets(["A glass is on a table; the bag is on his back."]))
+
+    def test_missing_fine_inventory_is_a_protocol_error_not_a_pass(self):
+        chain = "<think>A red square is on a horizontal surface.</think><answer>yes</answer>"
+        result = self.verify(self.verifier(FakeCritic({"fine_attributes": lambda v: {"attributes": []}})), chain)
+        self.assertFalse(result["accepted"])
+        self.assertFalse(result["verification_complete"])
+        self.assertEqual(result["failed_stage"], "fine_attributes")
+
+    def test_fine_negation_is_preserved_without_forcing_the_positive_value(self):
+        chain = "<think>The paddle is not vertical beside a square.</think><answer>yes</answer>"
+        # FakeCritic independently describes a horizontal axis.
+        result = self.verify(self.verifier(), chain)
+        self.assertTrue(result["accepted"], result["reasons"])
+        self.assertTrue(result["fine_attribute_targets"][0]["negated"])
+
+    def test_posture_front_and_back_direction_have_anatomical_meaning(self):
+        descriptions = ["The person lies on his back.", "The person lies back-up.",
+                        "The person lies back-down.", "The person lies face-up.",
+                        "The person lies face-down.", "The person lies front-up."]
+        targets = verifier_module.fine_attribute_targets(descriptions)
+        self.assertEqual([t["expected_value"] for t in targets],
+                         ["supine", "prone", "supine", "supine", "prone", "supine"])
+
+    def test_fine_negation_scope_preserves_additive_and_longer_pose_phrases(self):
+        descriptions = ["The person is not lying down on his side.",
+                        "The pole is not only vertical.", "The pole is not just vertical.",
+                        "The pole is not necessarily vertical."]
+        targets = verifier_module.fine_attribute_targets(descriptions)
+        self.assertEqual([t["negated"] for t in targets], [True, False, False, False])
+        self.assertEqual([t["polarity_uncertain"] for t in targets], [False, False, False, True])
+
+    def test_local_part_attachment_cannot_be_replaced_by_broad_entity(self):
+        chain = "<think>A white sheep stands with its hooves resting directly on the grass at (32, 32).</think><answer>yes</answer>"
+        fake = FakeCritic({"point_referents": lambda v: {"points": [
+            {**v["points"][0], "referent_quote": "white sheep"}]}})
+        result = self.verify(self.verifier(fake), chain)
+        self.assertFalse(result["accepted"])
+        self.assertIn("point_specific_feature_broadened", result["reasons"])
+        call = next(c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "point_referents")
+        point = json.loads(call["messages"][1]["content"][0]["text"])["point_claims"][0]
+        self.assertEqual(point["attachment"]["scope"], "feature")
+        self.assertEqual(point["attachment"]["required_feature_terms"], ["hooves"])
+
+    def test_broad_action_anchor_does_not_require_unclaimed_diagnostic_limb(self):
+        text = "A person is jumping with legs bent and body extended upward at [point_1]."
+        attachment = verifier_module.point_attachment(text, 1)
+        self.assertEqual(attachment["scope"], "object")
+        self.assertEqual(attachment["required_feature_terms"], [])
+        self.assertEqual(verifier_module.point_attachment("A head rests on a pillow at [point_1].", 1)["scope"], "object")
+
+    def test_contact_region_requires_preserved_local_scope(self):
+        text = "The red square rests directly on a plate around [point_1]."
+        self.assertEqual(verifier_module.point_attachment(text, 1)["scope"], "contact_region")
+        fake = FakeCritic({"point_referents": lambda v: {"points": [
+            {**v["points"][0], "attachment_scope_preserved": False}]}})
+        result = self.verify(self.verifier(fake), "<think>" + text.replace("[point_1]", "(32, 32)") + "</think><answer>yes</answer>")
+        self.assertFalse(result["accepted"])
+        self.assertIn("point_attachment_scope_not_preserved", result["reasons"])
+
+    def test_separately_anchored_relation_arguments_do_not_force_contact_centers(self):
+        text = "The toy [point_1] sits directly on the bicycle crossbar [point_2]."
+        first = verifier_module.point_attachment(text, 1)
+        second = verifier_module.point_attachment(text, 2)
+        self.assertEqual(first["scope"], "object")
+        self.assertEqual(second["scope"], "object")
+        explicit = "The toy [point_1] rests directly on the plate at the contact region [point_2]."
+        self.assertEqual(verifier_module.point_attachment(explicit, 2)["scope"], "contact_region")
+
+    def test_coordinate_lists_preserve_the_same_feature_attachment(self):
+        text = "The hooves at [point_1], [point_2] meet the grass."
+        first = verifier_module.point_attachment(text, 1)
+        second = verifier_module.point_attachment(text, 2)
+        self.assertEqual(first["scope"], "feature")
+        self.assertEqual(first, second)
 
     def test_whole_observation_completeness_is_mandatory(self):
         for change in [lambda v: {**v, "observations": []},
@@ -200,8 +365,8 @@ class VerifierTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(self.verify, [first, second]))
         self.assertTrue(all(result["accepted"] for result in results))
-        self.assertEqual(len(fake.calls), 4)
-        self.assertEqual(first.metrics["api_calls"] + second.metrics["api_calls"], 4)
+        self.assertEqual(len(fake.calls), 5)
+        self.assertEqual(first.metrics["api_calls"] + second.metrics["api_calls"], 5)
 
     def test_parallel_cli_helper_owns_counters_and_preserves_input_order(self):
         fake = FakeCritic(sleep=.01)
@@ -216,8 +381,8 @@ class VerifierTests(unittest.TestCase):
                 ["first", "second"], verifier, 2, lambda worker, item: (item, self.verify(worker))))
         self.assertEqual([item[0] for item in results], ["first", "second"])
         self.assertEqual(len(clones), 2)
-        self.assertEqual(verifier.metrics["api_calls"], 4)
-        self.assertEqual(verifier.metrics["cache_hits"], 4)
+        self.assertEqual(verifier.metrics["api_calls"], 5)
+        self.assertEqual(verifier.metrics["cache_hits"], 5)
 
     def test_prompt_policy_distinguishes_broad_anchors_and_coarse_visibility(self):
         scene = verifier_module.SCENE_PROMPT
@@ -241,7 +406,7 @@ class VerifierTests(unittest.TestCase):
             self.assertNotEqual(first.fingerprint, second.fingerprint)
             self.assertTrue(self.verify(second)["accepted"])
         self.assertEqual(second.metrics["api_calls"], 2)
-        self.assertEqual(second.metrics["cache_hits"], 2)
+        self.assertEqual(second.metrics["cache_hits"], 3)
 
     def test_one_bounded_retry_preserves_actual_failed_response_and_finish_reason(self):
         class InitiallyTruncated(FakeCritic):
@@ -262,6 +427,48 @@ class VerifierTests(unittest.TestCase):
         failed = json.loads(Path(records[0]["file"]).read_text())
         self.assertEqual(failed["finish_reason"], "length")
         self.assertEqual(failed["raw_response"], '{"incomplete":')
+
+    def test_contradictory_unsupported_whole_requires_protocol_retry_not_automatic_accept(self):
+        class InitiallyContradictory(FakeCritic):
+            def create(self, **kwargs):
+                completion = super().create(**kwargs)
+                if kwargs["response_format"]["json_schema"]["name"] == "scene_claims" and \
+                        sum(c["response_format"]["json_schema"]["name"] == "scene_claims" for c in self.calls) == 1:
+                    value = json.loads(completion.choices[0].message.content)
+                    value["observations"][0]["whole_observation_support"] = "unsupported"
+                    completion.choices[0].message.content = json.dumps(value)
+                return completion
+        fake = InitiallyContradictory()
+        result = self.verify(self.verifier(fake))
+        self.assertTrue(result["accepted"], result["reasons"])
+        scene_calls = [c for c in fake.calls if c["response_format"]["json_schema"]["name"] == "scene_claims"]
+        self.assertEqual(len(scene_calls), 2)
+        failed = json.loads(Path(result["cache_records"][1]["attempt_records"][0]["file"]).read_text())
+        self.assertIn("contradicts", failed["error"])
+
+    def test_consistency_retry_can_find_a_real_extra_unsupported_claim(self):
+        class FindsUnsupportedClaim(FakeCritic):
+            def create(self, **kwargs):
+                completion = super().create(**kwargs)
+                if kwargs["response_format"]["json_schema"]["name"] == "scene_claims":
+                    value = json.loads(completion.choices[0].message.content)
+                    value["observations"][0]["whole_observation_support"] = "unsupported"
+                    if sum(c["response_format"]["json_schema"]["name"] == "scene_claims" for c in self.calls) > 1:
+                        value["claims"][0]["status"] = "unsupported"
+                    completion.choices[0].message.content = json.dumps(value)
+                return completion
+        result = self.verify(self.verifier(FindsUnsupportedClaim()))
+        self.assertTrue(result["verification_complete"])
+        self.assertFalse(result["accepted"])
+        self.assertIn("material_claim_unsupported", result["reasons"])
+
+    def test_coarse_color_activity_and_idiom_scope_does_not_relax_precise_claims(self):
+        scene = verifier_module.SCENE_PROMPT
+        self.assertIn('such as "is moving"', scene)
+        self.assertIn('Explicit "both hands", "two hands"', scene)
+        self.assertIn("Preserve obvious hue or light/dark contradictions", scene)
+        self.assertIn("actual pose does not distinguish", verifier_module.IMAGE_QUESTION_SCOPE_POLICY)
+        self.assertIn("closeness, an unresolved gap", verifier_module.IMAGE_QUESTION_SCOPE_POLICY)
 
     def test_exhausted_protocol_retry_is_an_error_not_a_semantic_rejection(self):
         class AlwaysTruncated(FakeCritic):
@@ -292,6 +499,44 @@ class VerifierTests(unittest.TestCase):
         # A mock affirmative image adjudication proves the lexical flag is not
         # itself a veto; real acceptance still requires the supplied pixels.
         self.assertTrue(self.verify(self.verifier(), chain)["accepted"])
+
+    def test_physical_units_require_scope_checks_but_body_part_feet_do_not(self):
+        risks = observability_risk_targets(["The person is several meters away.", "A six-foot-wide board is visible.",
+                                           "The ruler indicates 2 cm.", "The dog has two feet touching the sand."])
+        measurements = [r for r in risks if r["kind"] == "physical_measurement"]
+        self.assertEqual({r["observation_id"] for r in measurements}, {1, 2, 3})
+        self.assertTrue(all(r["requires_physical_scope"] and r["requires_visible_scale_reference"] for r in measurements))
+
+    def test_unmeasured_meters_cannot_pass_with_a_scene_scan(self):
+        chain = "<think>The red square is several meters away.</think><answer>yes</answer>"
+        result = self.verify(self.verifier(), chain)
+        self.assertTrue(result["verification_complete"])
+        self.assertFalse(result["accepted"])
+        self.assertIn("physical_measurement_without_visible_scale_reference", result["reasons"])
+
+    def test_visible_ruler_measurement_is_not_a_lexical_unit_veto(self):
+        chain = "<think>The red square is 2 cm wide beside a calibrated ruler.</think><answer>yes</answer>"
+        def calibrated(value):
+            for observation in value["observations"]:
+                for check in observation["observability_checks"]:
+                    check["scale_reference_kind"] = "visible_calibrated_ruler_or_grid"
+                    check["scale_reference_evidence"] = "Readable 0 and 2 cm ticks align with the square edges."
+            return value
+        # The mock explicitly adjudicates a visible calibration. This tests that
+        # the policy permits grounded measurements rather than banning unit words.
+        result = self.verify(self.verifier(FakeCritic({"scene_claims": calibrated})), chain)
+        self.assertTrue(result["accepted"], result["reasons"])
+
+    def test_lack_of_blur_does_not_establish_stillness(self):
+        statement = "The red square is not moving because no motion blur is visible."
+        risks = observability_risk_targets([statement, "No motion blur is visible.", "A running pose is depicted."])
+        motion = [r for r in risks if r["kind"] == "blur_to_motion_inference"]
+        self.assertEqual(len(motion), 1)
+        self.assertEqual(motion[0]["observation_id"], 1)
+        result = self.verify(self.verifier(), "<think>" + statement + "</think><answer>yes</answer>")
+        self.assertTrue(result["verification_complete"])
+        self.assertFalse(result["accepted"])
+        self.assertIn("motion_inference_not_established_by_blur_or_pose", result["reasons"])
 
     def test_image_presence_count_scope_does_not_weaken_hidden_physical_assertions(self):
         for prompt in (verifier_module.BLIND_PROMPT, verifier_module.SCENE_PROMPT):

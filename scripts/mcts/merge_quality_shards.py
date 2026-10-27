@@ -16,17 +16,29 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import re
 
 from vlmsearch.data_manifest import file_sha256
 from vlmsearch.quality_verifier import (
     atomic_json, content_hash, observations_and_points, strict_json, validate_inventory, validate_schema,
+    fine_attribute_targets, mask_coordinate_observations, point_attachment,
+    observability_risk_targets,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MERGE_VERSION = "quality_shards_merge_v1"
 SPLITS = ("train", "val", "test")
-STAGES = ("blind_answer", "scene_claims", "blind_centers", "point_referents")
+LEGACY_STAGES = ("blind_answer", "scene_claims", "blind_centers", "point_referents")
+STAGES = ("blind_answer", "scene_claims", "fine_attributes", "blind_centers", "point_referents")
+
+
+def policy_stages(version):
+    if version == "image_claim_point_critic_v1":
+        return LEGACY_STAGES
+    if version in {"image_claim_point_critic_v2", "image_claim_point_critic_v3"}:
+        return STAGES
+    raise ValueError("Unsupported critic policy version")
 
 
 def checked_json(path, checksum_field=None, expected=None):
@@ -136,10 +148,11 @@ class CriticRecordAudit:
         return stage, value
 
     def verify_fingerprint(self, manifest):
-        if all(stage in self.prompts for stage in STAGES):
+        stages = policy_stages(manifest["filter_version"])
+        if all(stage in self.prompts for stage in stages):
             expected = content_hash({"version": manifest["filter_version"], "config": manifest["verifier_config"],
                                      "checkpoint": manifest["model_identity"],
-                                     "prompts": [self.prompts[stage] for stage in STAGES] + [self.retry_instruction]})
+                                     "prompts": [self.prompts[stage] for stage in stages] + [self.retry_instruction]})
             assert_equal(expected, manifest["verifier_fingerprint"], "Critic manifest fingerprint does not match recorded prompts/settings")
 
 
@@ -150,7 +163,7 @@ def validate_verdict(decision, candidate, manifest, audit):
     expected_binding = {"candidate_sha256": hashlib.sha256(candidate["candidate_chain"].encode()).hexdigest(),
                         "image_sha256": candidate["image_sha256"],
                         "question_sha256": hashlib.sha256(candidate["question"].encode()).hexdigest(),
-                        "geometry_sha256": content_hash(candidate["image_geometry"]),
+                        "geometry_sha256": content_hash(candidate["image_geometry"]) if candidate["image_geometry"] is not None else None,
                         "source_fingerprints": candidate["source_fingerprints"],
                         "verifier_fingerprint": manifest["verifier_fingerprint"]}
     assert_equal(verdict.get("binding"), expected_binding, "Candidate/source/critic binding mismatch")
@@ -171,26 +184,69 @@ def validate_verdict(decision, candidate, manifest, audit):
         raise ValueError("Incomplete critic decision was not kept separate from semantic decisions")
     if decision.get("accepted") is not verdict["accepted"] or decision.get("duplicate_exact_chain") is not False:
         raise ValueError("Shard decision duplicates or acceptance do not match its unique candidate")
-    _, points, _ = observations_and_points(candidate["candidate_chain"])
+    observations, points, _ = observations_and_points(candidate["candidate_chain"])
+    stages = policy_stages(manifest["filter_version"])
+    masked, _ = mask_coordinate_observations(observations)
+    fine_targets = fine_attribute_targets(masked, include_color=manifest["filter_version"] == "image_claim_point_critic_v3") if "fine_attributes" in stages else []
+    if "fine_attributes" in stages:
+        assert_equal(verdict.get("fine_attribute_targets"), fine_targets, "Fine-attribute source inventory changed")
+    if manifest["filter_version"] == "image_claim_point_critic_v3":
+        assert_equal(verdict.get("observability_risk_targets"), observability_risk_targets(masked),
+                     "Observability source inventory changed")
     assert_equal(verdict.get("point_count"), len(points), "Candidate point inventory mismatch")
     records = [audit.record(reference, manifest) for reference in verdict.get("cache_records", [])]
     for reference in verdict.get("failed_attempt_records", []):
         audit.attempt(reference, manifest)
     passes = verdict.get("passes", {})
-    for stage in STAGES[:2]:
+    for stage in stages[:2]:
         if stage in passes and (stage, passes[stage]) not in records:
             raise ValueError("Critic semantic pass does not match a bound cache record")
     if complete:
-        if [stage for stage, _ in records[:2]] != list(STAGES[:2]):
+        if [stage for stage, _ in records[:2]] != list(stages[:2]):
             raise ValueError("Completed critic decision lacks blind/scene records")
-        if any(stage not in passes for stage in STAGES[:2]):
+        if any(stage not in passes for stage in stages[:2]):
             raise ValueError("Completed critic decision lacks semantic passes")
         batches = passes.get("localization_batches", [])
         point_ids = [point_id for batch in batches for point_id in batch["point_ids"]]
         assert_equal(sorted(point_ids), list(range(1, len(points) + 1)), "Completed critic decision did not cover every point exactly once")
-        expected_records = list(zip(STAGES[:2], [passes[stage] for stage in STAGES[:2]]))
+        expected_records = list(zip(stages[:2], [passes[stage] for stage in stages[:2]]))
+        if manifest["filter_version"] == "image_claim_point_critic_v3" and verdict["accepted"]:
+            risks = {item["risk_target_id"]: item for item in verdict["observability_risk_targets"]}
+            for observation in passes["scene_claims"]["observations"]:
+                for check in observation["observability_checks"]:
+                    selected = [risks[key] for key in check["risk_target_ids"]]
+                    if (any(item.get("requires_visible_scale_reference") for item in selected)
+                            and check.get("scale_reference_kind") not in {"visible_calibrated_ruler_or_grid", "readable_explicit_dimension_label"}):
+                        raise ValueError("Accepted physical measurement lacks its required visible scale")
+                    if (any(item.get("requires_independent_motion_evidence") for item in selected)
+                            and check.get("motion_evidence_kind") != "readable_temporal_measurement_or_motion_annotation"):
+                        raise ValueError("Accepted motion inference relies on blur or pose alone")
+        if "fine_attributes" in stages:
+            if fine_targets:
+                if "fine_attributes" not in passes:
+                    raise ValueError("Completed critic decision lacks fine-attribute pass")
+                expected_records.append(("fine_attributes", passes["fine_attributes"]))
+            else:
+                assert_equal(passes.get("fine_attributes"), {"attributes": []}, "Empty fine-attribute pass changed")
+            if verdict["accepted"]:
+                targets = {item["target_id"]: item for item in fine_targets}
+                for attribute in passes["fine_attributes"]["attributes"]:
+                    target = targets[attribute["target_id"]]
+                    if (target.get("polarity_uncertain") or attribute["clarity"] != "clear" or attribute["observed_value"] in {"unclear", "lying_unspecified"}
+                            or ((attribute["observed_value"] == target["expected_value"]) == target["negated"])):
+                        raise ValueError("Accepted decision contradicts its independent fine-attribute check")
         for batch in batches:
             expected_records.extend([("blind_centers", batch["blind_centers"]), ("point_referents", batch["referents"])])
+            if "fine_attributes" in stages and verdict["accepted"]:
+                by_point = {point["point_id"]: point for point in points}
+                for referent in batch["referents"]["points"]:
+                    source = by_point[referent["point_id"]]
+                    attachment = point_attachment(masked[source["observation_id"] - 1], source["point_id"])
+                    if (referent.get("checked_attachment_quote") != attachment["attachment_quote"]
+                            or referent.get("attachment_scope_preserved") is not True
+                            or any(not re.search(r"\b" + re.escape(term) + r"\b", referent["referent_quote"], re.I)
+                                   for term in attachment["required_feature_terms"])):
+                        raise ValueError("Accepted point changed its source attachment scope")
         assert_equal(records, expected_records, "Critic point/scene passes differ from their cache records")
     for key, value in verdict.get("metrics", {}).items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:

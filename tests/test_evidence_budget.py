@@ -1,8 +1,7 @@
 """The normalized teacher protocol must not repeat observations until depth runs out."""
 
-import importlib.util
 import os
-from pathlib import Path
+import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -141,18 +140,41 @@ class EvidenceBudgetTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "positive integers"):
                     self.model()
 
-    def test_launcher_prompt_requires_named_anchors_and_discourages_unsupported_claims(self):
-        path = Path(__file__).resolve().parents[1] / "scripts/mcts/qwen38_rollout.py"
-        spec = importlib.util.spec_from_file_location("budget_launcher", path)
-        launcher = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(launcher)
-        prompt = launcher.SYSTEM_PROMPT
-        self.assertIn("at most 40 words", prompt)
-        self.assertIn("exact visible object or part named immediately before it", prompt)
-        self.assertIn("never paraphrase or repeat", prompt)
-        self.assertIn("proximity alone does not establish contact", prompt)
-        self.assertIn("do not invent a comparison standard", prompt)
-        self.assertIn(NORMALIZED_COORDINATE_INSTRUCTION, prompt)
+    def test_prompt_policy_is_recorded_and_actual_user_question_is_preserved(self):
+        # The audit must be able to distinguish old and new generation policies;
+        # prompt changes must not alter the image question or its coordinate frame.
+        model = self.model()
+        question = "Are the sheep's hooves touching grass?"
+        model.generate_single_thought(PROMPT, [(question, self.image)])
+        request = self.call()
+        content = request["messages"][-1]["content"]
+        self.assertEqual(content[0]["type"], "image_url")
+        self.assertTrue(content[1]["text"].startswith(question + "\n\n"))
+        self.assertIn(NORMALIZED_COORDINATE_INSTRUCTION, request["messages"][0]["content"][0]["text"])
+        self.assertEqual(model.generation_policy["version"], 4)
+        self.assertEqual(model.generation_policy["coordinate_syntax"], "grammar_numeric_pairs_0_1000_v1")
+        self.assertEqual(model.generation_policy["point_binding"], "adjacent_named_object_or_claim_specific_feature")
+        self.assertEqual(model.generation_policy["max_evidence_steps"], 1)
+        self.assertEqual(request["max_tokens"], 128)
+
+    def test_grammar_accepts_absence_and_separate_bounded_numeric_points(self):
+        for text in ["No person is visible.", "The hoof (0, 1000) touches grass.",
+                     "A toy (500.125, 45) rests on the handlebar (999, 0.001)."]:
+            with self.subTest(text=text):
+                self.assertIsNotNone(re.fullmatch(qwen_vllm.EVIDENCE_OUTPUT_REGEX, '<evidence>'+text+'</evidence>'))
+        for token in ["(~735, 386)", "(around 460, 420)", "(252, 490, 478, 530)",
+                      "(e.g., at coordinates 500, 80)", "(x, y)", "(-1, 2)", "(1000.1, 2)", "(2, 1090)"]:
+            with self.subTest(token=token):
+                self.assertIsNone(re.fullmatch(qwen_vllm.EVIDENCE_OUTPUT_REGEX, '<evidence>The object '+token+'.</evidence>'))
+
+    def test_coordinate_grammar_only_constrains_native_evidence_calls(self):
+        model = self.model()
+        model.generate_single_thought(PROMPT, [("Question", self.image)])
+        self.assertEqual(self.call()["extra_body"]["structured_outputs"], {"regex": qwen_vllm.EVIDENCE_OUTPUT_REGEX})
+        model.generate_single_thought(PROMPT, [("Question", self.image)], force_final=True)
+        self.assertNotIn("structured_outputs", self.call()["extra_body"])
+        model.generate_single_thought("Legacy prompt", [("Question", self.image)])
+        self.assertNotIn("structured_outputs", self.call()["extra_body"])
 
 
 if __name__ == "__main__":

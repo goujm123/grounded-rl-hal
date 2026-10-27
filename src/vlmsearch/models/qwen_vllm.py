@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import hashlib
 from vlmsearch.image_geometry import ImagePayloadCache, NORMALIZED_COORDINATE_INSTRUCTION
 
 # Configure logging to suppress debug messages for this module
@@ -16,6 +17,13 @@ TIMEOUT = float(os.getenv("QWEN_VLLM_TIMEOUT", "360"))
 BASE_URL = os.getenv("QWEN_VLLM_BASE_URL", f"http://localhost:{os.getenv('PORT', '9011')}/v1")
 SERVED_MODEL_NAME = os.getenv("QWEN_VLLM_MODEL", "qwen_vllm")
 EVIDENCE_BLOCK_RE = re.compile(r"<evidence>\s*(.*?)\s*</evidence>", re.IGNORECASE | re.DOTALL)
+# Constrain only the evidence protocol. Native normalized coordinates must be
+# complete numeric pairs in [0,1000]; range/frame validation still runs later.
+NORMALIZED_NUMBER_PATTERN = r"(?:1000(?:\.0{1,3})?|[0-9]{1,3}(?:\.[0-9]{1,3})?)"
+EVIDENCE_OUTPUT_REGEX = (
+    r"<evidence>(?:[^()<>\r\n（）]|\n|\(" + NORMALIZED_NUMBER_PATTERN
+    + r",[ ]{0,2}" + NORMALIZED_NUMBER_PATTERN + r"\))+</evidence>"
+)
 
 client = OpenAI(
     api_key=os.getenv("QWEN_VLLM_API_KEY", "qwen"),
@@ -69,10 +77,14 @@ class Qwen_VLLM():
         if self.max_evidence_steps <= 0 or self.evidence_max_new_tokens <= 0:
             raise ValueError("Qwen3.8 evidence step and token budgets must be positive integers")
         self.generation_policy = {
-            "version": 1, "protocol": "normalized_1000_evidence",
+            "version": 4, "protocol": "normalized_1000_evidence",
+            "coordinate_syntax": "grammar_numeric_pairs_0_1000_v1",
+            "evidence_regex_sha256": hashlib.sha256(EVIDENCE_OUTPUT_REGEX.encode()).hexdigest(),
             "max_evidence_steps": self.max_evidence_steps,
             "evidence_max_new_tokens": self.evidence_max_new_tokens,
             "budget_action": "force_final_answer",
+            "point_binding": "adjacent_named_object_or_claim_specific_feature",
+            "claim_scope": "minimal_relevant_visible_fact",
         }
         self.image_payload_cache = ImagePayloadCache(
             min_pixels=int(os.getenv("QWEN38_MIN_PIXELS", "65536")),
@@ -240,7 +252,13 @@ class Qwen_VLLM():
                                                  "yes/no answer; do not generate another observation.")
                                 elif previous_evidence_steps == 0:
                                     text_str += ("\nNext response: ONE atomic factual observation, at most 40 words. "
-                                                 "Name the visible referent immediately before its point. "
+                                                 "Use named object or part (x, y), then its visible predicate. "
+                                                 "Each pair must contain exactly two numbers and one comma; "
+                                                 "put approximation words outside and use a separate pair for each point. "
+                                                 "Never use prose or literal x/y placeholders inside a pair. "
+                                                 "For a feature-dependent claim, point to that exact visible feature. "
+                                                 "Omit irrelevant or uncertain fine qualifiers; a broader supported "
+                                                 "posture or appearance is preferable to an invented subtype. "
                                                  "After this observation, answer immediately unless an essential "
                                                  "new fact is permitted by a remaining evidence budget.")
                                 else:
@@ -322,6 +340,8 @@ class Qwen_VLLM():
                       else [self.thought_token_end, self.final_token_end]
                       if self.thought_token_begin == "<evidence>" else None),
                 extra_body={
+                    **({"structured_outputs": {"regex": EVIDENCE_OUTPUT_REGEX}}
+                       if bounded_evidence_protocol and not force_final else {}),
                     "include_stop_str_in_output": self.thought_token_begin == "<evidence>",
                     "continue_final_message": continue_final_message,
                     "add_generation_prompt": add_generation_prompt,
