@@ -41,6 +41,9 @@ def tag_model_output(output, sample, model, started, before):
     output["search_elapsed_seconds"] = time.perf_counter() - started
     output["model_diagnostics"] = {key: value - before.get(key, 0)
                                    for key, value in model_metrics(model).items()}
+    policy = getattr(model, "generation_policy", None)
+    if policy:
+        output["generation_policy"] = copy.deepcopy(policy)
     geometry = getattr(model, "last_image_geometry", None)
     if geometry:
         with Image.open(sample["image"]) as image:

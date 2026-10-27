@@ -5,6 +5,7 @@ from PIL import Image
 from typing import List, Tuple, Optional
 import json
 import logging
+import re
 import time
 from vlmsearch.image_geometry import ImagePayloadCache, NORMALIZED_COORDINATE_INSTRUCTION
 
@@ -14,6 +15,7 @@ logging.getLogger(__name__).setLevel(logging.WARNING)
 TIMEOUT = float(os.getenv("QWEN_VLLM_TIMEOUT", "360"))
 BASE_URL = os.getenv("QWEN_VLLM_BASE_URL", f"http://localhost:{os.getenv('PORT', '9011')}/v1")
 SERVED_MODEL_NAME = os.getenv("QWEN_VLLM_MODEL", "qwen_vllm")
+EVIDENCE_BLOCK_RE = re.compile(r"<evidence>\s*(.*?)\s*</evidence>", re.IGNORECASE | re.DOTALL)
 
 client = OpenAI(
     api_key=os.getenv("QWEN_VLLM_API_KEY", "qwen"),
@@ -62,6 +64,16 @@ class Qwen_VLLM():
         self.final_token_end = final_token_end
         self.multicrop = multicrop
         self.repetition_penalty = repetition_penalty
+        self.max_evidence_steps = int(os.getenv("QWEN38_MAX_EVIDENCE_STEPS", "1"))
+        self.evidence_max_new_tokens = int(os.getenv("QWEN38_EVIDENCE_MAX_NEW_TOKENS", "128"))
+        if self.max_evidence_steps <= 0 or self.evidence_max_new_tokens <= 0:
+            raise ValueError("Qwen3.8 evidence step and token budgets must be positive integers")
+        self.generation_policy = {
+            "version": 1, "protocol": "normalized_1000_evidence",
+            "max_evidence_steps": self.max_evidence_steps,
+            "evidence_max_new_tokens": self.evidence_max_new_tokens,
+            "budget_action": "force_final_answer",
+        }
         self.image_payload_cache = ImagePayloadCache(
             min_pixels=int(os.getenv("QWEN38_MIN_PIXELS", "65536")),
             max_pixels=int(os.getenv("QWEN38_MAX_PIXELS", "1048576")),
@@ -71,7 +83,8 @@ class Qwen_VLLM():
         self.last_image_geometry = None
         self.metrics = {"api_calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
                         "image_encode_seconds": 0.0, "image_cache_hits": 0, "image_cache_misses": 0,
-                        "uploaded_image_bytes": 0, "api_seconds": 0.0}
+                        "uploaded_image_bytes": 0, "api_seconds": 0.0,
+                        "evidence_budget_forced_finals": 0}
         if examples is not None:
             with open(examples, "r") as f:
                 self.examples = json.load(f)
@@ -132,6 +145,15 @@ class Qwen_VLLM():
         self.last_transport_geometry = geometry
         return uri
 
+    @staticmethod
+    def _previous_evidence_steps(previous_thoughts):
+        """Count actual generated blocks, never the question or few-shot prompt."""
+        count = 0
+        for text, maybe_image in previous_thoughts[1:]:
+            if maybe_image is None:
+                count += sum(bool(match.group(1).strip()) for match in EVIDENCE_BLOCK_RE.finditer(text))
+        return count
+
     def generate_single_thought(
         self,
         system_prompt: str,
@@ -154,6 +176,13 @@ class Qwen_VLLM():
         # Only a prompt with the explicit contract may declare its coordinates
         # normalized. Legacy clients must not acquire a frame by inference.
         normalized_protocol = NORMALIZED_COORDINATE_INSTRUCTION in system_prompt
+        bounded_evidence_protocol = (normalized_protocol and self.thought_token_begin == "<evidence>"
+                                     and self.thought_token_end == "</evidence>")
+        previous_evidence_steps = self._previous_evidence_steps(previous_thoughts) if bounded_evidence_protocol else 0
+        if (bounded_evidence_protocol and not force_final
+                and previous_evidence_steps >= self.max_evidence_steps):
+            force_final = True
+            self.metrics["evidence_budget_forced_finals"] += 1
         self.last_image_geometry = None
         messages = [
             {
@@ -205,6 +234,18 @@ class Qwen_VLLM():
                             text_str += (f"\n\nImage geometry: original {width} x {height} pixels; "
                                          f"displayed {tw} x {th} pixels. Point coordinates must use "
                                          "the normalized 0-1000 grid specified above.")
+                            if bounded_evidence_protocol:
+                                if force_final:
+                                    text_str += ("\nThe observation budget is closed. Return only the final "
+                                                 "yes/no answer; do not generate another observation.")
+                                elif previous_evidence_steps == 0:
+                                    text_str += ("\nNext response: ONE atomic factual observation, at most 40 words. "
+                                                 "Name the visible referent immediately before its point. "
+                                                 "After this observation, answer immediately unless an essential "
+                                                 "new fact is permitted by a remaining evidence budget.")
+                                else:
+                                    text_str += ("\nPrior evidence is available. Answer now unless an essential "
+                                                 "new visible fact is needed; do not repeat an earlier observation.")
                         messages.append(
                             {
                                 "role": "user",
@@ -271,7 +312,8 @@ class Qwen_VLLM():
             completion = client.chat.completions.create(
                 model=SERVED_MODEL_NAME,
                 messages=messages,
-                max_tokens=self.max_new_tokens,
+                max_tokens=(min(self.max_new_tokens, self.evidence_max_new_tokens)
+                            if bounded_evidence_protocol and not force_final else self.max_new_tokens),
                 temperature=temperature,
                 top_p=self.top_p,
                 # Keep one visible evidence step per MCTS expansion even when

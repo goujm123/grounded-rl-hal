@@ -224,6 +224,7 @@ python scripts/data/prepare_amber_pilot.py
 bash scripts/mcts/run_mcts_qwen38.sh --dry-run
 DATA_FILE=data/hallucination/pilots/amber_150_seed42_v1/pilot.mcts.jsonl \
   SAVE_TAG=PILOT_AMBER_150_QWEN38 MAX_NEW_TOKENS=256 N_ROLLOUTS_PER_NODE=1 \
+  QWEN38_MAX_EVIDENCE_STEPS=1 QWEN38_EVIDENCE_MAX_NEW_TOKENS=128 \
   bash scripts/mcts/run_mcts_qwen38.sh --simulations 2 --max-depth 4 --rollout-max-steps 2
 ```
 
@@ -235,6 +236,11 @@ the selected IDs, quotas, dimensions, and input/review/split hashes. Changed
 selection inputs require a new output directory. These bounded pilot settings
 retain two children per expansion while limiting repeated observations. Record
 the search budget when comparing yield or estimating a larger run.
+The normalized Qwen protocol defaults to one balanced evidence observation per
+trajectory, followed by a forced final answer. Evidence calls are capped at 128
+tokens. This budget counts generated history only; a question or few-shot
+example containing evidence tags cannot consume it. Legacy protocols retain
+their previous behavior. Rollouts record the generation policy and budget hits.
 
 The launcher validates input labels, image checksums, the frozen manifest, and
 training review before starting inference. It uses the isolated teacher environment, verifies
@@ -275,6 +281,12 @@ python scripts/mcts/build_reasoning_chains_from_mcts.py \
   --split-manifest data/hallucination/prepared/manifest.json
 ```
 
+The converter validates all source points before conservative observation
+deduplication, validates the retained points again, and records removed spans.
+Cleanup preserves different counts, negation, colors, directional roles, and
+distinct image locations. These exports are candidates with
+`quality_status=pending_visual_verification`, not quality-approved training data.
+
 The converter preserves train/dev/test assignments, writing separate train,
 validation, and test files. `scripts/rl/build_amber_discriminative_rl.py` also
 accepts `--split-manifest` and detects this prepared manifest by default, rather
@@ -283,6 +295,43 @@ data and are not silently converted to binary training questions.
 The existing coordinate filter is configurable with `--allow-no-coordinate` for
 observations such as image-wide absence; coordinate presence does not establish
 localization correctness.
+
+Apply semantic quality checks before using candidate SFT for training. Keep a
+matching teacher server running for this stage (for example, start
+`bash scripts/vllm/serve_qwen38.sh` in a separate terminal):
+
+```bash
+python scripts/mcts/filter_reasoning_quality.py \
+  --input-dir data/mcts/YOUR_RUN_DIRECTORY/reasoning_chains \
+  --rollout-dir data/mcts/YOUR_RUN_DIRECTORY \
+  --selection data/hallucination/pilots/amber_150_seed42_v1/selection.json \
+  --output-dir data/mcts/YOUR_RUN_DIRECTORY/sft_quality_filtered \
+  --cache-dir data/hallucination/quality_cache \
+  --base-url http://127.0.0.1:9011/v1 --workers 4
+```
+
+The filter first answers the image question without seeing the proposed answer
+or explanation. It then checks every material claim, describes numbered point
+centers without candidate text, and compares those centers with the claimed
+referents using fresh full-image views and local crops. Gold labels, rewards,
+sample IDs, and prior audit findings are never sent to the critic. Uncertainty,
+unsupported assertions, wrong or imprecise referents, repeated observations,
+incomplete responses, and protocol errors withhold the entire chain.
+
+The filter revalidates exact source-chain derivation, image bytes, geometry,
+review decisions, and frozen partitions. Its locked cache binds requests to the
+checkpoint, prompts, inference settings, images, and schema. New filtered files
+include accepted-decision provenance; `quality_decisions.jsonl` preserves every
+rejection and `quality_manifest.json` records completion and output hashes.
+Use these filtered files for training. A missing completion manifest indicates
+an unfinished or failed filtering run. Output directories must be new; cached
+critiques can be reused on retries. For a full training run omit `--selection`;
+it is a pilot-membership check, not a second data split.
+
+The critic uses the same model with separate prompts and can share its visual
+errors. Calibrate it against audited training examples and visually inspect a
+stratified retained sample; automated acceptance is not a visual correctness
+guarantee.
 
 Analyze the pilot after SFT conversion, supplying its saved selection and run:
 

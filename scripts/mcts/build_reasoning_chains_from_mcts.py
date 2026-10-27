@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw
 from vlmsearch.data_manifest import FrozenDataManifest
 from vlmsearch.data_review import ReviewedTrainingData
 from vlmsearch.reward_funcs.answers import parse_final_answer
+from vlmsearch.evidence_normalization import deduplicate_observations
 from vlmsearch.image_geometry import (
     CoordinateError, PIXEL_COORDINATE_INSTRUCTION,
     convert_coordinate_text,
@@ -126,6 +127,11 @@ def normalize_rollout_chain(
     if not reasoning:
         return None, None, "empty_think"
     try:
+        # Check the entire original trace first so pruning cannot hide a bad point.
+        convert_coordinate_text(reasoning, geometry=image_geometry, original_size=original_size,
+                                legacy_coordinate_frame=legacy_coordinate_frame)
+        extent = 1000 if image_geometry else max(original_size or (1000, 1000))
+        reasoning, evidence_audit = deduplicate_observations(reasoning, coordinate_extent=extent)
         reasoning, mapping = convert_coordinate_text(
             reasoning, geometry=image_geometry, original_size=original_size,
             legacy_coordinate_frame=legacy_coordinate_frame,
@@ -134,6 +140,7 @@ def normalize_rollout_chain(
         return None, None, str(exc)
     if coordinate_audit is not None:
         coordinate_audit["mapping"] = mapping
+        coordinate_audit["evidence_normalization"] = evidence_audit
     if require_coordinate and not mapping:
         return None, None, "missing_coordinate"
 
@@ -203,9 +210,11 @@ def build_all_reasoning_for_sample(
                 "ephemeral_depth": rollout.get("ephemeral_depth"),
                 "depth": rollout.get("depth"),
                 "coordinate_mapping": coordinate_audit.get("mapping", []),
+                "evidence_normalization": coordinate_audit.get("evidence_normalization", {}),
             }
         )
         stats["chains_kept"] += 1
+        stats["repeated_observations_removed"] += coordinate_audit.get("evidence_normalization", {}).get("removed_count", 0)
 
     return chains, root_node_value, stats
 
@@ -459,6 +468,8 @@ def main():
         "review_overlay_sha256": review.sha256 if review else None,
         "legacy_coordinate_frame": args.legacy_coordinate_frame,
         "student_prompt_version": STUDENT_PROMPT_VERSION,
+        "quality_status": "pending_visual_verification",
+        "quality_verification_required_for_training": True,
         "counts": Counter(),
         "filters": Counter(),
         "per_file_rows": defaultdict(int),
@@ -530,6 +541,8 @@ def main():
                     "image_geometry": data_json.get("image_geometry"),
                     "source_image_geometry": data_json.get("image_geometry"),
                     "coordinate_mapping": chain["coordinate_mapping"],
+                    "evidence_normalization": chain["evidence_normalization"],
+                    "quality_status": "pending_visual_verification",
                     "original_image_size": list(original_size),
                     "legacy_coordinate_frame": args.legacy_coordinate_frame if not data_json.get("image_geometry") else None,
                     **{key: data_json[key] for key in ("review_overlay_id", "review_overlay_sha256", "pilot_selection_id") if key in data_json},
